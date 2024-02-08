@@ -64,7 +64,7 @@ func main() {
 				},
 				Action: func(cCtx *cli.Context) error {
 					return client.Start(client.Config{
-						Destination: cCtx.String("dest"),
+						Target:      cCtx.String("dest"),
 						Host:        cCtx.String("host"),
 						Path:        "/_websocket",
 						SecretToken: parseToken(cCtx),

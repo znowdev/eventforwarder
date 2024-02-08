@@ -4,13 +4,13 @@ import (
 	"bufio"
 	"bytes"
 	"fmt"
+	"github.com/znowdev/reqbouncer/internal/util"
 	"log"
 	"log/slog"
 	"net/http"
 	"net/url"
 	"os"
 	"os/signal"
-	"strings"
 	"sync"
 	"time"
 
@@ -18,7 +18,7 @@ import (
 )
 
 type Config struct {
-	Destination string
+	Target      string
 	Host        string
 	Path        string
 	SecretToken string
@@ -54,24 +54,33 @@ func connect(u url.URL, token string) error {
 
 func Start(cfg Config) error {
 	// Parse command-line flags
-	destination := cfg.Destination
-	host := cfg.Host
 
-	slog.Info(fmt.Sprintf("forwarding requests to %s", destination))
+	dest, err := util.ParseHost(cfg.Target)
+	if err != nil {
+		return err
+	}
+
+	host, err := util.ParseHost(cfg.Host)
+	if err != nil {
+		return err
+	}
+
 	// Prepare the WebSocket scheme and host
 	wsScheme := "ws"
-	if strings.HasPrefix(host, "https") {
+	if host.Scheme == "https" {
 		wsScheme = "wss"
 	}
-	host = strings.TrimPrefix(host, "https://")
-	host = strings.TrimPrefix(host, "http://")
-	host = strings.TrimSuffix(host, "/")
+
+	if host.Port == "" {
+		host.Port = "443"
+	}
 
 	// Prepare the URL
-	u := url.URL{Scheme: wsScheme, Host: host, Path: cfg.Path}
+	u := url.URL{Scheme: wsScheme, Host: host.Host + ":" + host.Port, Path: cfg.Path}
 
+	slog.Info(fmt.Sprintf("connecting to %s", u.String()))
 	// Connect to the server
-	err := connect(u, cfg.SecretToken)
+	err = connect(u, cfg.SecretToken)
 	if err != nil {
 		return fmt.Errorf("failed to dial after %d attempts: %s", maxRetries, err)
 	}
@@ -82,10 +91,12 @@ func Start(cfg Config) error {
 	signal.Notify(c, os.Interrupt, os.Kill)
 	go handleShutdown(c)
 
+	slog.Info(fmt.Sprintf("forwarding all requests to %s://%s:%s", dest.Scheme, dest.Host, dest.Port))
+
 	// Main loop: read messages and forward requests
 	slog.Info("successfully connected, waiting for messages...")
 	for {
-		if err := readAndForwardMessage(cfg, u); err != nil {
+		if err := readAndForwardMessage(dest, cfg.SecretToken, u); err != nil {
 			slog.Error("failed to read and forward message", slog.Any("error", err))
 		}
 	}
@@ -102,12 +113,12 @@ func handleShutdown(c chan os.Signal) {
 	os.Exit(0)
 }
 
-func readAndForwardMessage(cfg Config, u url.URL) error {
+func readAndForwardMessage(dest util.HostConfig, token string, u url.URL) error {
 	_, message, err := conn.ReadMessage()
 	if err != nil {
 		slog.Info(fmt.Sprintf("read: %s", err))
 		slog.Info("reconnecting")
-		err = connect(u, cfg.SecretToken)
+		err = connect(u, token)
 		if err != nil {
 			log.Fatalln("Failed to reconnect after", maxRetries, "attempts:", err)
 			return err
@@ -123,10 +134,10 @@ func readAndForwardMessage(cfg Config, u url.URL) error {
 	}
 
 	req.RequestURI = ""
-	req.URL.Scheme = "http"
-	req.URL.Host = cfg.Destination
+	req.URL.Scheme = dest.Scheme
+	req.URL.Host = dest.Host
 
-	slog.Info(fmt.Sprintf("forwarding request to %s: %s %s", cfg.Destination, req.Method, req.URL.Path))
+	slog.Info(fmt.Sprintf("forwarding request to %s: %s %s", dest.Host, req.Method, req.URL.Path))
 
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
@@ -134,7 +145,7 @@ func readAndForwardMessage(cfg Config, u url.URL) error {
 		return err
 	}
 	if resp.StatusCode != http.StatusOK {
-		slog.Error("received bad response", slog.Any("response", resp.StatusCode), slog.String("destination", cfg.Destination), slog.Any("request", req.URL.String()),
+		slog.Error("received bad response", slog.Any("response", resp.StatusCode), slog.String("destination", dest.Host), slog.Any("request", req.URL.String()),
 			slog.Any("response", resp.StatusCode), slog.Any("body", printBody(resp)))
 		return fmt.Errorf("bad response: %d", resp.StatusCode)
 	}
