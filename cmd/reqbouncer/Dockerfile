@@ -14,7 +14,7 @@ RUN go mod download
 COPY . .
 
 # Build the Go app
-RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o listener ./cmd/listener/main.go
+RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o reqbouncer ./cmd/reqbouncer/main.go
 
 # Stage 2: Start from a smaller image and copy the Go binary into it
 FROM alpine:latest  
@@ -24,7 +24,7 @@ RUN apk --no-cache add ca-certificates
 WORKDIR /root/
 
 # Copy the binary from builder stage
-COPY --from=builder /app/listener .
+COPY --from=builder /app/reqbouncer .
 
 # Expose port 8080 to the outside world
 EXPOSE 8080

@@ -64,7 +64,7 @@ func (s *server) forwardRequest(c *gin.Context) {
 
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
-		slog.Error(err.Error(), slog.String("reason", "could not send request to local forwarder"), slog.Any("error", err))
+		slog.Error(err.Error(), slog.String("reason", "could not send request to local server"), slog.Any("error", err))
 
 		handleError(c, err)
 		return

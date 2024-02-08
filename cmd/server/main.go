@@ -34,6 +34,7 @@ func main() {
 
 	srv := &server{&websocket.Upgrader{}, pubSub}
 
+	r.GET("/", srv.healthHandler)
 	r.GET("/health", srv.healthHandler)
 	r.GET("/websocket", srv.handleSockets)
 	r.NoRoute(srv.forwardRequest)
@@ -157,7 +158,6 @@ func (ws *server) handleSockets(c *gin.Context) {
 	for {
 		select {
 		case <-ctx.Done():
-			slog.Info("context done")
 			return
 		case msg := <-messages:
 			slog.Debug("sending message", slog.Any("message_id", msg.UUID))

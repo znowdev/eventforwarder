@@ -21,7 +21,7 @@ jobs:
   build-and-push-forwarder:
     env:
         REGISTRY: ghcr.io
-        IMAGE_NAME: ${{ github.repository }}/forwarder
+        IMAGE_NAME: ${{ github.repository }}/server
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -57,12 +57,12 @@ jobs:
           push: ${{ github.event_name != 'pull_request' }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
-          file: ./cmd/forwarder/Dockerfile
+          file: ./cmd/server/Dockerfile
 
   build-and-push-listener:
     env:
         REGISTRY: ghcr.io
-        IMAGE_NAME: ${{ github.repository }}/listener
+        IMAGE_NAME: ${{ github.repository }}/reqbouncer
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -98,4 +98,4 @@ jobs:
           push: ${{ github.event_name != 'pull_request' }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
-          file: ./cmd/listener/Dockerfile
+          file: ./cmd/reqbouncer/Dockerfile
