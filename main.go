@@ -74,8 +74,8 @@ func main() {
 				},
 			},
 			{
-				Name:  "listen",
-				Usage: "starts a reqbouncer client",
+				Name:  "forward",
+				Usage: "starts a reqbouncer forwarding client",
 				Flags: []cli.Flag{
 					&cli.StringFlag{
 						Name:    "server",
