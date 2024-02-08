@@ -166,11 +166,15 @@ func NewHandler(opts *slog.HandlerOptions) *Handler {
 	}
 }
 
-func NewSlogger() (*slog.Logger, error) {
+func NewSlogger(debug bool) (*slog.Logger, error) {
 	var s *slog.Logger
+	var level = slog.LevelInfo
+	if debug {
+		level = slog.LevelDebug
+	}
 	s = slog.New(NewHandler(&slog.HandlerOptions{
 		AddSource:   false,
-		Level:       slog.LevelDebug,
+		Level:       level,
 		ReplaceAttr: nil,
 	}))
 
