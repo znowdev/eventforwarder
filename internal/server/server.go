@@ -5,15 +5,16 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
+	"net/http"
+	"os"
+	"sync/atomic"
+
 	"github.com/ThreeDotsLabs/watermill"
 	"github.com/ThreeDotsLabs/watermill/message"
 	"github.com/ThreeDotsLabs/watermill/pubsub/gochannel"
 	"github.com/gorilla/websocket"
 	"github.com/labstack/echo/v4"
-	"log/slog"
-	"net/http"
-	"os"
-	"sync/atomic"
 )
 
 const (
@@ -22,7 +23,11 @@ const (
 
 var connectedClients atomic.Int32
 
-func Start() error {
+type Config struct {
+	SecretToken string
+}
+
+func Start(cfg Config) error {
 	e := echo.New()
 	pubSub := gochannel.NewGoChannel(
 		gochannel.Config{},
@@ -31,9 +36,11 @@ func Start() error {
 
 	srv := &server{&websocket.Upgrader{}, pubSub}
 
+	authMw := newAuthMiddleware(cfg.SecretToken)
+
 	e.GET("/", srv.healthHandler)
 	e.GET("/health", srv.healthHandler)
-	e.GET("/websocket", srv.handleSockets)
+	e.GET("/_websocket", srv.handleSockets, authMw)
 	e.RouteNotFound("/*", srv.forwardRequest)
 
 	defaultPort := "4045"
