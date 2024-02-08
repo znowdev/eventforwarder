@@ -13,5 +13,5 @@ go install github.com/znowdev/reqbouncer@latest
 Then you can run the binary with the following command:
 
 ```bash
-reqbouncer --host https://reqbouncer.onrender.com:443 -dest http://localhost:8081
+reqbouncer listen --host https://reqbouncer.onrender.com:443 --dest http://localhost:4000 --secret-token "my-secret-token"
 ```
