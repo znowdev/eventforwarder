@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"runtime/debug"
 	"strconv"
 	"strings"
 	"time"
@@ -24,6 +25,8 @@ const (
 	retryPeriod       = 2 * time.Second
 	secretTokenEnvKey = "REQBOUNCER_SECRET_TOKEN"
 )
+
+var Version string
 
 func main() {
 	// Parse command-line flags
@@ -43,6 +46,14 @@ func main() {
 			return nil
 		},
 		Commands: []*cli.Command{
+			{
+				Name:  "version",
+				Usage: "prints the version",
+				Action: func(cCtx *cli.Context) error {
+					fmt.Println(version())
+					return nil
+				},
+			},
 			{
 				Name:  "serve",
 				Usage: "starts a reqbouncer server",
@@ -228,4 +239,15 @@ func parseServer(cCtx *cli.Context) string {
 	}
 
 	return server
+}
+
+func version() string {
+	if Version == "" {
+		i, ok := debug.ReadBuildInfo()
+		if !ok {
+			return ""
+		}
+		Version = i.Main.Version
+	}
+	return Version
 }

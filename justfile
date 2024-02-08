@@ -7,5 +7,5 @@ install:
     @go install -v .
 
 installgh:
-    @echo "Installing..."
-    @go install github.com/znowdev/reqbouncer@latest
+    @echo "Installing from gh..."
+    go install github.com/znowdev/reqbouncer@latest
