@@ -14,7 +14,7 @@ RUN go mod download
 COPY . .
 
 # Build the Go app
-RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o reqbouncer .main.go
+RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o reqbouncer
 
 # Stage 2: Start from a smaller image and copy the Go binary into it
 FROM alpine:3.19
