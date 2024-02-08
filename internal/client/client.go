@@ -1,9 +1,8 @@
-package main
+package client
 
 import (
 	"bufio"
 	"bytes"
-	"flag"
 	"fmt"
 	"github.com/gorilla/websocket"
 	"log"
@@ -17,10 +16,11 @@ import (
 	"time"
 )
 
-var destination = "localhost:4000"
-var host = "localhost:4045"
-var path = "/websocket"
-var hostPort = "443"
+type Config struct {
+	Destination string
+	Host        string
+	Path        string
+}
 
 const (
 	maxRetries  = 3
@@ -48,11 +48,10 @@ func connect(u url.URL) error {
 	return err
 }
 
-func main() {
+func Start(cfg Config) error {
 	// Parse command-line flags
-	flag.StringVar(&destination, "dest", destination, "destination to forward requests to")
-	flag.StringVar(&host, "host", host, "host to connect to")
-	flag.Parse()
+	destination := cfg.Destination
+	host := cfg.Host
 
 	slog.Info(fmt.Sprintf("forwarding requests to %s", destination))
 	// Prepare the WebSocket scheme and host
@@ -64,17 +63,13 @@ func main() {
 	host = strings.TrimPrefix(host, "http://")
 	host = strings.TrimSuffix(host, "/")
 
-	//// Initialize the logger
-	//slogger.NewSlogger()
-
 	// Prepare the URL
-	u := url.URL{Scheme: wsScheme, Host: host, Path: path}
+	u := url.URL{Scheme: wsScheme, Host: host, Path: cfg.Path}
 
 	// Connect to the server
 	err := connect(u)
 	if err != nil {
-		log.Fatalln("Failed to dial after", maxRetries, "attempts:", err)
-		return
+		return fmt.Errorf("failed to dial after %d attempts: %s", maxRetries, err)
 	}
 	defer conn.Close()
 
@@ -86,7 +81,7 @@ func main() {
 	// Main loop: read messages and forward requests
 	slog.Info("successfully connected, waiting for messages...")
 	for {
-		if err := readAndForwardMessage(u); err != nil {
+		if err := readAndForwardMessage(cfg.Destination, u); err != nil {
 			slog.Error("failed to read and forward message", slog.Any("error", err))
 		}
 	}
@@ -103,7 +98,7 @@ func handleShutdown(c chan os.Signal) {
 	os.Exit(0)
 }
 
-func readAndForwardMessage(u url.URL) error {
+func readAndForwardMessage(destination string, u url.URL) error {
 	_, message, err := conn.ReadMessage()
 	if err != nil {
 		slog.Info(fmt.Sprintf("read: %s", err))
@@ -128,8 +123,6 @@ func readAndForwardMessage(u url.URL) error {
 	req.URL.Host = destination
 
 	slog.Info(fmt.Sprintf("forwarding request to %s: %s %s", destination, req.Method, req.URL.Path))
-
-	//time.Sleep(100 * time.Millisecond)
 
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
