@@ -7,7 +7,7 @@ A simple helper proxy to forward events from one source to another.
 First install the reqbouncer binary:
 
 ```bash
-go install github.com/mscno/reqbouncer@latest
+go install github.com/znowdev/reqbouncer@latest
 ```
 
 Then you can run the binary with the following command:
