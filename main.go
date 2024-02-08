@@ -4,11 +4,11 @@ import (
 	"log"
 	"log/slog"
 	"os"
-	"reqbouncer/internal/client"
-	"reqbouncer/internal/server"
 	"time"
 
 	"github.com/urfave/cli/v2"
+	"github.com/znowdev/reqbouncer/internal/client"
+	"github.com/znowdev/reqbouncer/internal/server"
 )
 
 const (
