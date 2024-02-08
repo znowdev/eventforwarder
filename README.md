@@ -13,10 +13,10 @@ go install github.com/znowdev/reqbouncer@latest
 Then you can run the binary with the following command:
 
 ```bash
-reqbouncer listen --host reqbouncer.onrender.com:443 --secret-token "my-secret-token" 4000
+reqbouncer listen --host reqbouncerhost.com:443 --secret-token "my-secret-token" 4000
 ```
 
-This will start a listener that connects to the `reqbouncer.onrender.com:443` server and forwards all incoming requests to the `http://localhost:4000` server.
+This will start a listener that connects to the `reqbouncerhost.com:443` server and forwards all incoming requests to the `http://localhost:4000` server.
 
 
 ### Configuration
