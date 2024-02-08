@@ -8,4 +8,4 @@ install:
 
 installgh:
     @echo "Installing..."
-    @go install github.com/mscno/reqbouncer@latest
+    @go install github.com/znowdev/reqbouncer@latest
