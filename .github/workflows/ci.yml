@@ -20,6 +20,13 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v3
 
+      - name: Release
+        uses: softprops/action-gh-release@v1
+
+      - name: Set version
+        id: version
+        run: echo "::set-output name=version::${GITHUB_REF#refs/tags/}"
+
       - name: Set up Go
         uses: actions/setup-go@v2
         with:
@@ -27,11 +34,11 @@ jobs:
 
       - name: Build Go binaries
         run: |
-          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -installsuffix cgo -ldflags="-X 'main.Version=${{ github.ref }}'" -o ./bin/reqbouncer_linux_amd64
-          CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -installsuffix cgo -ldflags="-X 'main.Version=${{ github.ref }}'" -o ./bin/reqbouncer_linux_arm64
-          CGO_ENABLED=0 GOOS=darwin GOARCH=amd64 go build -installsuffix cgo -ldflags="-X 'main.Version=${{ github.ref }}'" -o ./bin/reqbouncer_darwin_amd64
-          CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 go build -installsuffix cgo -ldflags="-X 'main.Version=${{ github.ref }}'" -o ./bin/reqbouncer_darwin_arm64
-          CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -installsuffix cgo -ldflags="-X 'main.Version=${{ github.ref }}'" -o ./bin/reqbouncer_windows_amd64
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -installsuffix cgo -ldflags="-X 'main.Version=${{ steps.version.outputs.version }}'" -o ./bin/reqbouncer_linux_amd64
+          CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -installsuffix cgo -ldflags="-X 'main.Version=${{ steps.version.outputs.version }}'" -o ./bin/reqbouncer_linux_arm64
+          CGO_ENABLED=0 GOOS=darwin GOARCH=amd64 go build -installsuffix cgo -ldflags="-X 'main.Version=${{ steps.version.outputs.version }}'" -o ./bin/reqbouncer_darwin_amd64
+          CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 go build -installsuffix cgo -ldflags="-X 'main.Version=${{ steps.version.outputs.version }}'" -o ./bin/reqbouncer_darwin_arm64
+          CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -installsuffix cgo -ldflags="-X 'main.Version=${{ steps.version.outputs.version }}'" -o ./bin/reqbouncer_windows_amd64
 
       - name: Archive production artifacts
         run: |
@@ -46,6 +53,14 @@ jobs:
         with:
           name: binaries
           path: ./bin/*.tar.gz
+
+      - name: Release
+        uses: softprops/action-gh-release@v1
+        with:
+          files: |
+            ./bin/*.tar.gz
+            Release.txt
+            LICENSE
 
       - name: Login to Docker Hub
         uses: docker/login-action@v2
@@ -80,7 +95,7 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }} # This token is provided by Actions, you do not need to create your own token
         with:
-          tag_name: ${{ github.ref }}
-          release_name: Release ${{ github.ref }}
+          tag_name: ${{ steps.version.outputs.version }}
+          release_name: ${{ steps.version.outputs.version }}
           draft: false
           prerelease: false
