@@ -5,7 +5,6 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"log"
 	"log/slog"
 	"net"
 	"net/http"
@@ -192,8 +191,7 @@ func (c *Client) readAndForwardMessage(ctx context.Context) error {
 		slog.Info("reconnecting")
 		err = c.connect(ctx)
 		if err != nil {
-			log.Fatalln("Failed to reconnect after", maxRetries, "attempts:", err)
-			return err
+			return fmt.Errorf("failed to reconnect after %d attempts: %w", maxRetries, err)
 		}
 		return nil
 	}
