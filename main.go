@@ -55,12 +55,18 @@ func main() {
 				},
 			},
 			{
-				Name:  "serve",
-				Usage: "starts a reqbouncer server",
+				Name:    "server",
+				Aliases: []string{"serve"},
+				Usage:   "starts a reqbouncer server",
 				Flags: []cli.Flag{
 					&cli.StringFlag{
 						Name:  "secret-token",
 						Usage: "sets the secret token that protects the /_websocket endpoint",
+					},
+					&cli.StringFlag{
+						Name:    "port",
+						Aliases: []string{"p"},
+						Usage:   "sets the port to listen on",
 					},
 				},
 				Action: func(cCtx *cli.Context) error {
@@ -68,8 +74,19 @@ func main() {
 					if token == "" {
 						slog.Warn("secret token not provided, the server will be unprotected")
 					}
+
+					port := cCtx.String("port")
+					if port == "" {
+						port = "8080"
+					}
+
+					if val, ok := os.LookupEnv("PORT"); ok {
+						port = val
+					}
+
 					return server.Start(server.Config{
 						SecretToken: token,
+						Port:        port,
 					})
 				},
 			},

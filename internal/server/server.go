@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
-	"os"
 	"sync/atomic"
 
 	"github.com/ThreeDotsLabs/watermill"
@@ -25,6 +24,7 @@ var connectedClients atomic.Int32
 
 type Config struct {
 	SecretToken string
+	Port        string
 }
 
 func Start(cfg Config) error {
@@ -43,15 +43,7 @@ func Start(cfg Config) error {
 	e.GET("/_websocket", srv.handleSockets, authMw)
 	e.RouteNotFound("/*", srv.forwardRequest)
 
-	defaultPort := "4045"
-	port, ok := os.LookupEnv("PORT")
-	if !ok {
-		port = defaultPort
-	}
-
-	slog.Info("starting server", slog.Any("port", port))
-
-	err := e.Start(":" + port)
+	err := e.Start(":" + cfg.Port)
 	if err != nil {
 		return err
 	}
