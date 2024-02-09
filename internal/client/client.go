@@ -205,9 +205,9 @@ func (c *Client) readAndForwardMessage(ctx context.Context) error {
 
 	req.RequestURI = ""
 	req.URL.Scheme = c.target.HttpScheme()
-	req.URL.Host = c.target.Host
+	req.URL.Host = c.target.String()
 
-	slog.Info(fmt.Sprintf("forwarding request to %s: %s %s", c.target.Host, req.Method, req.URL.Path))
+	slog.Info(fmt.Sprintf("forwarding request to %s: %s %s", c.target.String(), req.Method, req.URL.Path))
 
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
