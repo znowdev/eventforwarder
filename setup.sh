@@ -24,11 +24,12 @@ fi
 # Get the latest release tag
 TAG=$(curl --silent "https://api.github.com/repos/$OWNER/$REPO/releases/latest" | grep '"tag_name":' | sed -E 's/.*"([^"]+)".*/\1/')
 
+echo "Downloading $BIN ($TAG) for $OS/$ARCH..."
 # Set the download URL
-URL="https://github.com/$OWNER/$REPO/releases/download/$TAG/$BIN_${OS}_$ARCH.tar.gz"
+URL="https://github.com/$OWNER/$REPO/releases/download/$TAG/${BIN}_${OS}_${ARCH}.tar.gz"
 
 # Download the binary
-curl -L $URL -o $BIN.tar.gz
+curl --silent -L $URL -o $BIN.tar.gz
 
 # Extract the binary
 tar -xzf $BIN.tar.gz
