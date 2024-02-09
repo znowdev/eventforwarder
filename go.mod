@@ -1,6 +1,6 @@
 module github.com/znowdev/reqbouncer
 
-go 1.21.6
+go 1.21
 
 require (
 	github.com/ThreeDotsLabs/watermill v1.3.5
