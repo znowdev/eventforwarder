@@ -31,25 +31,21 @@ jobs:
 
       - name: Build Go binaries
         run: |
-          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -installsuffix cgo -ldflags="-X 'main.Version=${{ steps.version.outputs.version }}'" -o ./bin/reqbouncer_linux_amd64
-          CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -installsuffix cgo -ldflags="-X 'main.Version=${{ steps.version.outputs.version }}'" -o ./bin/reqbouncer_linux_arm64
-          CGO_ENABLED=0 GOOS=darwin GOARCH=amd64 go build -installsuffix cgo -ldflags="-X 'main.Version=${{ steps.version.outputs.version }}'" -o ./bin/reqbouncer_darwin_amd64
-          CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 go build -installsuffix cgo -ldflags="-X 'main.Version=${{ steps.version.outputs.version }}'" -o ./bin/reqbouncer_darwin_arm64
-          CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -installsuffix cgo -ldflags="-X 'main.Version=${{ steps.version.outputs.version }}'" -o ./bin/reqbouncer_windows_amd64
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -installsuffix cgo -ldflags="-X 'main.Version=${{ steps.version.outputs.version }}'" -o ./bin/linux_amd64/reqbouncer
+          CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -installsuffix cgo -ldflags="-X 'main.Version=${{ steps.version.outputs.version }}'" -o ./bin/linux_arm64/reqbouncer
+          CGO_ENABLED=0 GOOS=darwin GOARCH=amd64 go build -installsuffix cgo -ldflags="-X 'main.Version=${{ steps.version.outputs.version }}'" -o ./bin/darwin_amd64/reqbouncer
+          CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 go build -installsuffix cgo -ldflags="-X 'main.Version=${{ steps.version.outputs.version }}'" -o ./bin/darwin_arm64/reqbouncer
+          CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -installsuffix cgo -ldflags="-X 'main.Version=${{ steps.version.outputs.version }}'" -o ./bin/windows_amd64/reqbouncer
+
+
 
       - name: Archive production artifacts
         run: |
-          tar -czvf ./bin/reqbouncer_linux_amd64.tar.gz -C ./bin/ reqbouncer_linux_amd64
-          tar -czvf ./bin/reqbouncer_linux_arm64.tar.gz -C ./bin/ reqbouncer_linux_arm64
-          tar -czvf ./bin/reqbouncer_darwin_amd64.tar.gz -C ./bin/ reqbouncer_darwin_amd64
-          tar -czvf ./bin/reqbouncer_darwin_arm64.tar.gz -C ./bin/ reqbouncer_darwin_arm64
-          tar -czvf ./bin/reqbouncer_windows_amd64.tar.gz -C ./bin/ reqbouncer_windows_amd64
-
-      - name: Upload artifacts
-        uses: actions/upload-artifact@v2
-        with:
-          name: binaries
-          path: ./bin/*.tar.gz
+          tar -czvf ./bin/reqbouncer_linux_amd64.tar.gz -C ./bin/linux_amd64 reqbouncer
+          tar -czvf ./bin/reqbouncer_linux_arm64.tar.gz -C ./bin/linux_arm64 reqbouncer
+          tar -czvf ./bin/reqbouncer_darwin_amd64.tar.gz -C ./bin/darwin_amd64 reqbouncer
+          tar -czvf ./bin/reqbouncer_darwin_arm64.tar.gz -C ./bin/darwin_arm64 reqbouncer
+          tar -czvf ./bin/reqbouncer_windows_amd64.tar.gz -C ./bin/windows_amd64 reqbouncer
 
       - name: Release
         uses: softprops/action-gh-release@v1
