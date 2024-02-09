@@ -33,3 +33,11 @@ This will create a `~/.reqbouncer/config` file in the user home directory with t
 secret_token="my secret token"
 server_host="host:port"
 ```
+
+
+### Install
+
+You can also install the reqbouncer binary by running the following command:
+
+```bash
+bash -c "$(curl -fsSL https://raw.githubusercontent.com/znowdev/reqbouncer/master/setup.sh)"
