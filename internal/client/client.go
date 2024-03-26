@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"github.com/znowdev/reqbouncer/internal/wire"
 	"log/slog"
@@ -13,6 +14,7 @@ import (
 	"net/url"
 	"os"
 	"os/signal"
+	"strings"
 	"sync"
 	"time"
 
@@ -125,10 +127,7 @@ func (c *Client) connect(ctx context.Context) error {
 			"Authorization":        {"Bearer " + c.secretToken},
 			"reqbouncer-client-id": {c.clientId},
 		})
-		if err == nil {
-			c.conn = conn
-			break
-		}
+
 		if err != nil {
 			slog.Debug(fmt.Sprintf("failed to dial, retrying in %s", retryPeriod), slog.Any("error", err))
 			time.Sleep(retryPeriod)
@@ -139,12 +138,23 @@ func (c *Client) connect(ctx context.Context) error {
 			slog.Info("received close message")
 			return nil
 		}
-
+		if resp.StatusCode == http.StatusPreconditionFailed {
+			return fmt.Errorf("precondition failed: %d", resp.StatusCode)
+		}
 		if resp.StatusCode == http.StatusUnauthorized {
 			return fmt.Errorf("unauthorized: %d", resp.StatusCode)
 		}
 		if resp.StatusCode == http.StatusForbidden {
 			return fmt.Errorf("forbidden: %d", resp.StatusCode)
+		}
+
+		if err == nil {
+			//conn.SetCloseHandler(func(code int, text string) error {
+			//	slog.Info(fmt.Sprintf("received close message: %d %s", code, text))
+			//	return errors.New(text)
+			//})
+			c.conn = conn
+			break
 		}
 	}
 
@@ -180,8 +190,30 @@ func (c *Client) Listen(ctx context.Context) error {
 	// Main loop: read messages and forward requests
 	slog.Info("successfully connected, waiting for messages...")
 	for {
-		if err := c.readAndForwardMessage(ctx); err != nil {
-			slog.Error("failed to read and forward message", slog.Any("error", err))
+		msgType, message, err := c.conn.ReadMessage()
+		if err != nil {
+			if websocket.IsCloseError(err, websocket.CloseNormalClosure) {
+				if strings.Contains(err.Error(), "client already connected") {
+					return err
+				}
+			}
+			slog.Info(fmt.Sprintf("read: %s", err))
+			slog.Info("reconnecting")
+			err = c.connect(ctx)
+			if err != nil {
+				return fmt.Errorf("failed to reconnect after %d attempts: %w", maxRetries, err)
+			}
+			return nil
+		}
+		if msgType == websocket.CloseMessage {
+			slog.Info("received close message", slog.Any("msg", string(message)))
+			return errors.New(string(message))
+		}
+
+		if msgType == websocket.BinaryMessage {
+			if err := c.readAndForwardMessage(ctx, message); err != nil {
+				slog.Error("failed to read and forward message", slog.Any("error", err))
+			}
 		}
 	}
 }
@@ -197,20 +229,10 @@ func handleShutdown(c chan os.Signal, conn *websocket.Conn) {
 	os.Exit(0)
 }
 
-func (c *Client) readAndForwardMessage(ctx context.Context) error {
-	_, message, err := c.conn.ReadMessage()
-	if err != nil {
-		slog.Info(fmt.Sprintf("read: %s", err))
-		slog.Info("reconnecting")
-		err = c.connect(ctx)
-		if err != nil {
-			return fmt.Errorf("failed to reconnect after %d attempts: %w", maxRetries, err)
-		}
-		return nil
-	}
+func (c *Client) readAndForwardMessage(ctx context.Context, socketPayload []byte) error {
 
 	var wireMessage wire.WireMessage
-	if err := wireMessage.Deserialize(message); err != nil {
+	if err := wireMessage.Deserialize(socketPayload); err != nil {
 		slog.Error("failed to deserialize message", slog.Any("error", err))
 		return err
 	}

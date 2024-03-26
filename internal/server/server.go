@@ -123,7 +123,7 @@ func (s *server) forwardRequest(c echo.Context) error {
 	clientId := c.Request().Header.Get("reqbouncer-client-id")
 	if clientId != "" {
 		if !s.clientMap.HasClient(clientId) {
-			return c.String(http.StatusForbidden, "no connected clients for this client id: "+clientId)
+			return c.String(http.StatusBadRequest, "no connected clients for this client id: "+clientId)
 		}
 		topic = clientId
 	}
@@ -167,7 +167,6 @@ func (s *server) forwardRequest(c echo.Context) error {
 		}
 	}
 
-	return c.String(http.StatusOK, "ok")
 }
 
 func (ws *server) handleSockets(c echo.Context) error {
@@ -176,6 +175,22 @@ func (ws *server) handleSockets(c echo.Context) error {
 	if clientId == "" {
 		anonClient = true
 		clientId = uuid.NewString()
+	}
+
+	if ws.clientMap.HasClient(clientId) {
+		slog.Debug("client already connected", slog.Any("client", clientId))
+		conn, err := ws.Upgrade(c.Response(), c.Request(), nil)
+		if err != nil {
+			return err
+		}
+		defer conn.Close()
+
+		err = conn.WriteControl(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.CloseNormalClosure, "client already connected"), time.Now().Add(time.Second))
+		if err != nil {
+			slog.Error("failed to write close message", slog.Any("error", err))
+			return err
+		}
+		return nil
 	}
 
 	ws.clientMap.AddClient(clientId)
@@ -263,7 +278,7 @@ func (ws *server) handleSockets(c echo.Context) error {
 				return err
 			}
 
-			err = conn.WriteMessage(websocket.TextMessage, bytes)
+			err = conn.WriteMessage(websocket.BinaryMessage, bytes)
 			if err != nil {
 				return err
 			}
@@ -281,7 +296,7 @@ func (ws *server) handleSockets(c echo.Context) error {
 				return err
 			}
 
-			err = conn.WriteMessage(websocket.TextMessage, bytes)
+			err = conn.WriteMessage(websocket.BinaryMessage, bytes)
 			if err != nil {
 				return err
 			}

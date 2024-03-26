@@ -140,3 +140,79 @@ func TestE2E(t *testing.T) {
 	})
 
 }
+
+func TestE2EMultiClientsWithSameId(t *testing.T) {
+	slogger.NewSlogger(true)
+	targetPort := "50002"
+	serverPort := "50003"
+
+	go func() {
+		// Start server
+		err := server.Start(server.Config{
+			SecretToken: "secret",
+			Port:        serverPort,
+		})
+		if err != nil {
+			t.Fatalf("failed to start server: %v", err)
+		}
+	}()
+
+	time.Sleep(100 * time.Millisecond)
+	// Start client
+
+	go func() {
+		// Start client
+		client, err := client.NewClient(client.Config{
+			ClientId:    "client1",
+			Target:      "localhost:" + targetPort,
+			Server:      "localhost:" + serverPort,
+			Path:        "/_websocket",
+			SecretToken: "secret",
+		})
+		if err != nil {
+			t.Fatalf("failed to start client: %v", err)
+		}
+		err = client.Listen(context.Background())
+		if err != nil {
+			t.Fatalf("failed to listen: %v", err)
+
+		}
+	}()
+
+	time.Sleep(100 * time.Millisecond)
+
+	client, err := client.NewClient(client.Config{
+		ClientId:    "client1",
+		Target:      "localhost:" + targetPort,
+		Server:      "localhost:" + serverPort,
+		Path:        "/_websocket",
+		SecretToken: "secret",
+	})
+	if err != nil {
+		t.Fatalf("failed to start client: %v", err)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	doneCh := make(chan struct{})
+	var gotErr error
+	defer cancel()
+	go func() {
+		defer close(doneCh)
+		err := client.Listen(context.Background())
+		if err != nil {
+			gotErr = err
+		}
+
+		doneCh <- struct{}{}
+	}()
+
+	select {
+	case <-ctx.Done():
+		break
+	case <-doneCh:
+		break
+	}
+	if gotErr == nil {
+		t.Fatalf("expected error, got nil")
+	}
+}
