@@ -5,9 +5,11 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"github.com/znowdev/reqbouncer/internal/wire"
 	"log/slog"
 	"net"
 	"net/http"
+	"net/http/httputil"
 	"net/url"
 	"os"
 	"os/signal"
@@ -40,9 +42,11 @@ type Client struct {
 	target      HostPost
 	server      HostPost
 	secretToken string
+	clientId    string
 }
 
 type Config struct {
+	ClientId    string
 	Target      string
 	Server      string
 	Path        string
@@ -88,6 +92,7 @@ func NewClient(cfg Config) (*Client, error) {
 	}
 
 	return &Client{
+		clientId:    cfg.ClientId,
 		path:        cfg.Path,
 		target:      target,
 		server:      server,
@@ -105,6 +110,10 @@ func (c *Client) connect(ctx context.Context) error {
 		scheme = "wss"
 	}
 
+	if c.server.Host == "localhost" {
+		c.server.Host += ":" + c.server.Port
+	}
+
 	u := url.URL{Scheme: scheme, Host: c.server.Host, Path: c.path}
 
 	var conn *websocket.Conn
@@ -113,7 +122,8 @@ func (c *Client) connect(ctx context.Context) error {
 	for i := 0; i < maxRetries; i++ {
 		slog.Debug(fmt.Sprintf("dialing %s", u.String()))
 		conn, resp, err = websocket.DefaultDialer.Dial(u.String(), map[string][]string{
-			"Authorization": {"Bearer " + c.secretToken},
+			"Authorization":        {"Bearer " + c.secretToken},
+			"reqbouncer-client-id": {c.clientId},
 		})
 		if err == nil {
 			c.conn = conn
@@ -196,7 +206,13 @@ func (c *Client) readAndForwardMessage(ctx context.Context) error {
 		return nil
 	}
 
-	buf := bufio.NewReader(bytes.NewReader(message))
+	var wireMessage wire.WireMessage
+	if err := wireMessage.Deserialize(message); err != nil {
+		slog.Error("failed to deserialize message", slog.Any("error", err))
+		return err
+	}
+
+	buf := bufio.NewReader(bytes.NewReader(wireMessage.Payload))
 	req, err := http.ReadRequest(buf)
 	if err != nil {
 		slog.Error("failed to read request", slog.Any("error", err))
@@ -220,7 +236,24 @@ func (c *Client) readAndForwardMessage(ctx context.Context) error {
 		return fmt.Errorf("bad response: %d", resp.StatusCode)
 	}
 
-	return nil
+	respbytes, err := httputil.DumpResponse(resp, true)
+	if err != nil {
+		slog.Error("failed to dump response", slog.Any("error", err))
+		return err
+	}
+
+	responseWireMessage := wire.WireMessage{
+		ID:      wireMessage.ID,
+		Payload: respbytes,
+	}
+
+	wirePayload, err := responseWireMessage.Serialize()
+	if err != nil {
+		slog.Error("failed to serialize response", slog.Any("error", err))
+		return err
+	}
+
+	return c.conn.WriteMessage(websocket.BinaryMessage, wirePayload)
 }
 
 func printBody(resp *http.Response) string {

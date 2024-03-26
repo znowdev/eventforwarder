@@ -103,6 +103,10 @@ func main() {
 						Name:  "secret-token",
 						Usage: "specify the secret token to connect to the reqbouncer server",
 					},
+					&cli.StringFlag{
+						Name:  "user",
+						Usage: "specify the user id to connect to the reqbouncer server",
+					},
 				},
 				Action: func(cCtx *cli.Context) error {
 					if cCtx.NArg() == 0 {
@@ -142,6 +146,12 @@ func main() {
 						return err
 					}
 
+					fmt.Print("Enter UserId: ")
+					userId, err := reader.ReadString('\n')
+					if err != nil {
+						return err
+					}
+
 					fmt.Print("Enter Secret Token: ")
 					secretToken, err := reader.ReadString('\n')
 					if err != nil {
@@ -151,6 +161,7 @@ func main() {
 					// Trim newline characters
 					serverHost = strings.TrimSpace(serverHost)
 					secretToken = strings.TrimSpace(secretToken)
+					userId = strings.TrimSpace(userId)
 
 					// Get user home directory
 					homeDir, err := os.UserHomeDir()
@@ -176,7 +187,7 @@ func main() {
 					defer file.Close()
 
 					// Write server host and secret token to config file
-					_, err = file.WriteString(fmt.Sprintf("server_host=%s\nsecret_token=%s\n", serverHost, secretToken))
+					_, err = file.WriteString(fmt.Sprintf("server_host=%s\nsecret_token=%s\nuser_id=%s", serverHost, secretToken, userId))
 					if err != nil {
 						return err
 					}
@@ -251,6 +262,20 @@ func parseServer(cCtx *cli.Context) string {
 	}
 
 	server, err := parseConfigKey("server_host")
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	return server
+}
+
+func parseUserId(cCtx *cli.Context) string {
+	server := cCtx.String("user")
+	if server != "" {
+		return server
+	}
+
+	server, err := parseConfigKey("user_id")
 	if err != nil {
 		log.Fatal(err)
 	}
