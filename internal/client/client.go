@@ -160,6 +160,9 @@ func (c *Client) Listen(ctx context.Context) error {
 	// Prepare the URL
 
 	slog.Info(fmt.Sprintf("connecting to %s", server.Host))
+	if c.clientId != "" {
+		slog.Info(fmt.Sprintf("using client_id %s", c.clientId))
+	}
 	// Connect to the server
 	err := c.connect(ctx)
 	if err != nil {

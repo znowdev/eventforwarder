@@ -9,6 +9,7 @@ import (
 	"github.com/znowdev/reqbouncer/internal/wire"
 	"log/slog"
 	"net/http"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -37,7 +38,7 @@ func Start(cfg Config) error {
 		watermill.NewStdLogger(false, false),
 	)
 
-	srv := &server{&websocket.Upgrader{}, pubSub}
+	srv := &server{&websocket.Upgrader{}, pubSub, &clientMap{clients: make(map[string]struct{})}}
 
 	authMw := newAuthMiddleware(cfg.SecretToken)
 
@@ -56,7 +57,49 @@ func Start(cfg Config) error {
 
 type server struct {
 	*websocket.Upgrader
-	pubSub *gochannel.GoChannel
+	pubSub    *gochannel.GoChannel
+	clientMap *clientMap
+}
+
+type clientMap struct {
+	clients map[string]struct{}
+	mux     sync.Mutex
+}
+
+func (cm *clientMap) AddClient(clientId string) {
+	cm.mux.Lock()
+	defer cm.mux.Unlock()
+	cm.clients[clientId] = struct{}{}
+}
+
+func (cm *clientMap) HasClient(clientId string) bool {
+	cm.mux.Lock()
+	defer cm.mux.Unlock()
+	_, ok := cm.clients[clientId]
+	return ok
+
+}
+
+func (cm *clientMap) RemoveClient(clientId string) {
+	cm.mux.Lock()
+	defer cm.mux.Unlock()
+	delete(cm.clients, clientId)
+}
+
+func (cm *clientMap) Clients() []string {
+	cm.mux.Lock()
+	defer cm.mux.Unlock()
+	clients := make([]string, 0, len(cm.clients))
+	for client := range cm.clients {
+		clients = append(clients, client)
+	}
+	return clients
+}
+
+func (cm *clientMap) ConnectedClientsNo() int {
+	cm.mux.Lock()
+	defer cm.mux.Unlock()
+	return len(cm.clients)
 }
 
 func (s *server) healthHandler(c echo.Context) error {
@@ -64,7 +107,6 @@ func (s *server) healthHandler(c echo.Context) error {
 }
 
 func (s *server) forwardRequest(c echo.Context) error {
-
 	slog.Info("forwarding request", slog.Any("headers", c.Request().Header))
 
 	requestId := uuid.NewString()
@@ -80,6 +122,9 @@ func (s *server) forwardRequest(c echo.Context) error {
 	topic := requestsTopic
 	clientId := c.Request().Header.Get("reqbouncer-client-id")
 	if clientId != "" {
+		if !s.clientMap.HasClient(clientId) {
+			return c.String(http.StatusForbidden, "no connected clients for this client id: "+clientId)
+		}
 		topic = clientId
 	}
 
@@ -122,40 +167,23 @@ func (s *server) forwardRequest(c echo.Context) error {
 		}
 	}
 
-	//messages, err := s.pubSub.Subscribe(c.Request.Context(), msg.UUID)
-	//if err != nil {
-	//	return err
-	//	return
-	//}
-	//
-	//ctx, cancel := context.WithTimeout(c.Request.Context(), 60*time.Second)
-	//defer cancel()
-	//
-	//select {
-	//case <-ctx.Done():
-	//	handleError(c, ctx.Err())
-	//case msg := <-messages:
-	//	slog.Debug("received response", slog.Any("message_id", msg.UUID))
-	//	buf := bufio.NewReader(bytes.NewReader(msg.Payload))
-	//	req, err := http.ReadR(buf)
-	//	if err != nil {
-	//		slog.Error("failed to read request", slog.Any("error", err))
-	//	}
-	//
-	//
-	//}
-	//resp := <-messages
-	//c.Data(http.StatusOK, "application/json", resp.Payload)
 	return c.String(http.StatusOK, "ok")
 }
 
 func (ws *server) handleSockets(c echo.Context) error {
-	connectedClients.Add(1)
-	slog.Info(fmt.Sprintf("client connected (total connected clients: %d)", connectedClients.Load()), slog.Any("total_connected_clients", connectedClients.Load()), slog.Any("client", c.Request().RemoteAddr))
+	var anonClient bool
+	clientId := c.Request().Header.Get("reqbouncer-client-id")
+	if clientId == "" {
+		anonClient = true
+		clientId = uuid.NewString()
+	}
+
+	ws.clientMap.AddClient(clientId)
+	slog.Info(fmt.Sprintf("client connected (total connected clients: %d)", ws.clientMap.ConnectedClientsNo()), slog.Any("total_connected_clients", ws.clientMap.ConnectedClientsNo()), slog.Any("client", c.Request().RemoteAddr))
 
 	defer func() {
-		connectedClients.Add(-1)
-		slog.Info(fmt.Sprintf("client disconnected (total connected clients: %d)", connectedClients.Load()), slog.Any("total_connected_clients", connectedClients.Load()), slog.Any("client", c.Request().RemoteAddr))
+		ws.clientMap.RemoveClient(clientId)
+		slog.Info(fmt.Sprintf("client disconnected (total connected clients: %d)", ws.clientMap.ConnectedClientsNo()), slog.Any("total_connected_clients", ws.clientMap.ConnectedClientsNo()), slog.Any("client", c.Request().RemoteAddr))
 	}()
 
 	conn, err := ws.Upgrade(c.Response(), c.Request(), nil)
@@ -164,9 +192,8 @@ func (ws *server) handleSockets(c echo.Context) error {
 	}
 	defer conn.Close()
 
-	clientId := c.Request().Header.Get("reqbouncer-client-id")
 	var clientMessages <-chan *message.Message
-	if clientId != "" {
+	if !anonClient {
 		clientMessages, err = ws.pubSub.Subscribe(c.Request().Context(), clientId)
 		if err != nil {
 			return err

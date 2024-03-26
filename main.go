@@ -122,7 +122,7 @@ func main() {
 						target = "localhost:" + arg
 					}
 					c, err := client.NewClient(client.Config{
-
+						ClientId:    parseClientId(cCtx),
 						Target:      target,
 						Server:      parseServer(cCtx),
 						Path:        "/_websocket",
@@ -187,7 +187,7 @@ func main() {
 					defer file.Close()
 
 					// Write server host and secret token to config file
-					_, err = file.WriteString(fmt.Sprintf("server_host=%s\nsecret_token=%s\nuser_id=%s", serverHost, secretToken, userId))
+					_, err = file.WriteString(fmt.Sprintf("server_host=%s\nclient_id=%s\nsecret_token=%s", serverHost, userId, secretToken))
 					if err != nil {
 						return err
 					}
@@ -269,13 +269,13 @@ func parseServer(cCtx *cli.Context) string {
 	return server
 }
 
-func parseUserId(cCtx *cli.Context) string {
-	server := cCtx.String("user")
+func parseClientId(cCtx *cli.Context) string {
+	server := cCtx.String("client-id")
 	if server != "" {
 		return server
 	}
 
-	server, err := parseConfigKey("user_id")
+	server, err := parseConfigKey("client_id")
 	if err != nil {
 		log.Fatal(err)
 	}
