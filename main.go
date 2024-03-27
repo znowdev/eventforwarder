@@ -34,7 +34,6 @@ var Version string
 func main() {
 	// Parse command-line flags
 	var cfg *config.Config
-
 	app := &cli.App{
 		Name:  "reqbouncer",
 		Usage: "hijack and bounce requests to a different server",
@@ -48,9 +47,7 @@ func main() {
 		},
 		Before: func(c *cli.Context) error {
 			slogger.NewSlogger(true)
-			var err error
-			cfg, err = config.Init()
-			return zerrors.ToInternal(err, "failed to initialize config")
+			return nil
 		},
 		Commands: []*cli.Command{
 			{
@@ -115,6 +112,11 @@ func main() {
 				Name:    "server",
 				Aliases: []string{"serve"},
 				Usage:   "starts a reqbouncer server",
+				Before: func(context *cli.Context) error {
+					var err error
+					cfg, err = config.Init()
+					return zerrors.ToInternal(err, "failed to initialize config")
+				},
 				Flags: []cli.Flag{
 					&cli.StringFlag{
 						Name:    "port",
@@ -123,11 +125,6 @@ func main() {
 					},
 				},
 				Action: func(cCtx *cli.Context) error {
-					token := parseToken(cCtx)
-					if token == "" {
-						slog.Warn("secret token not provided, the server will be unprotected")
-					}
-
 					port := cCtx.String("port")
 					if port == "" {
 						port = "8080"
@@ -269,6 +266,9 @@ func parseConfigKey(key string) (string, error) {
 	configFile := filepath.Join(homeDir, ".reqbouncer", "config")
 	file, err := os.Open(configFile)
 	if err != nil {
+		if os.IsNotExist(err) {
+			return "", nil
+		}
 		return "", err
 	}
 	defer file.Close()
