@@ -29,8 +29,9 @@ const (
 var connectedClients atomic.Int32
 
 type Config struct {
-	GithubProvider auth.GithubProvider
-	Port           string
+	GithubClientid     string
+	GithubUserProvider auth.GithubUserProvider
+	Port               string
 }
 
 func Start(cfg Config) error {
@@ -55,10 +56,11 @@ func Start(cfg Config) error {
 		PermessageDeflate: gws.PermessageDeflate{Enabled: true}, // Enable compression
 		ParallelEnabled:   true,                                 // Parallel message processing
 	})
-	srv := &server{upgrader, pubSub, cm}
+	srv := &server{upgrader, cfg.GithubClientid, pubSub, cm}
 
-	authMw := newAuthMiddleware(cfg.GithubProvider)
+	authMw := newAuthMiddleware(cfg.GithubUserProvider)
 
+	e.GET("/_config", srv.configHandler)
 	e.GET("/_health", srv.healthHandler)
 	e.GET("/_websocket", srv.handleSockets, authMw)
 	e.RouteNotFound("/*", srv.forwardRequest)
@@ -188,12 +190,17 @@ func (c *Handler) OnMessage(socket *gws.Conn, wsmsg *gws.Message) {
 
 type server struct {
 	*gws.Upgrader
-	pubSub    *gochannel.GoChannel
-	clientMap *clientMap
+	githubClientid string
+	pubSub         *gochannel.GoChannel
+	clientMap      *clientMap
 }
 
 func (s *server) healthHandler(c echo.Context) error {
 	return c.JSON(200, echo.Map{"status": "ok"})
+}
+
+func (s *server) configHandler(c echo.Context) error {
+	return c.JSON(200, echo.Map{"github_client_id": s.githubClientid})
 }
 
 func (s *server) forwardRequest(c echo.Context) error {

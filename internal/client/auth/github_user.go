@@ -8,7 +8,7 @@ import (
 	"time"
 )
 
-type GithubProvider func(accessToken string) (GitHubUser, error)
+type GithubUserProvider func(accessToken string) (GitHubUser, error)
 
 func GetGitHubUser(accessToken string) (GitHubUser, error) {
 	var user GitHubUser

@@ -27,6 +27,7 @@ const (
 	maxRetries        = 3
 	retryPeriod       = 2 * time.Second
 	secretTokenEnvKey = "REQBOUNCER_SECRET_TOKEN"
+	defaultServer     = "https://reqbouncer.znow.dev"
 )
 
 var Version string
@@ -135,8 +136,9 @@ func main() {
 					}
 
 					return server.Start(server.Config{
-						GithubProvider: auth.GetGitHubUser,
-						Port:           port,
+						GithubClientid:     cfg.GithubClientId,
+						GithubUserProvider: auth.GetGitHubUser,
+						Port:               port,
 					})
 				},
 			},

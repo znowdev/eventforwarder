@@ -22,7 +22,7 @@ func TestE2E(t *testing.T) {
 	go func() {
 		// Start server
 		err := server.Start(server.Config{
-			GithubProvider: func(token string) (auth.GitHubUser, error) {
+			GithubUserProvider: func(token string) (auth.GitHubUser, error) {
 				return auth.GitHubUser{
 					Login: "client1",
 				}, nil
@@ -156,7 +156,7 @@ func TestE2EMultiClientsWithSameId(t *testing.T) {
 	go func() {
 		// Start server
 		err := server.Start(server.Config{
-			GithubProvider: func(token string) (auth.GitHubUser, error) {
+			GithubUserProvider: func(token string) (auth.GitHubUser, error) {
 				return auth.GitHubUser{
 					Login: "client1",
 				}, nil
