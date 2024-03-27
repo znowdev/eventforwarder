@@ -4,8 +4,8 @@ import (
 	"bufio"
 	"bytes"
 	"context"
-	"errors"
 	"fmt"
+	"github.com/lxzan/gws"
 	"github.com/znowdev/reqbouncer/internal/wire"
 	"log/slog"
 	"net"
@@ -14,7 +14,6 @@ import (
 	"net/url"
 	"os"
 	"os/signal"
-	"strings"
 	"sync"
 	"time"
 
@@ -38,13 +37,14 @@ func (h *HostPost) HttpScheme() string {
 }
 
 type Client struct {
-	conn        *websocket.Conn
+	conn        *gws.Conn
 	connMutex   sync.Mutex
 	path        string
 	target      HostPost
 	server      HostPost
 	secretToken string
 	clientId    string
+	closeErr    chan error
 }
 
 type Config struct {
@@ -99,6 +99,7 @@ func NewClient(cfg Config) (*Client, error) {
 		target:      target,
 		server:      server,
 		secretToken: cfg.SecretToken,
+		closeErr:    make(chan error),
 	}, nil
 
 }
@@ -118,14 +119,21 @@ func (c *Client) connect(ctx context.Context) error {
 
 	u := url.URL{Scheme: scheme, Host: c.server.Host, Path: c.path}
 
-	var conn *websocket.Conn
-	var resp *http.Response
+	var conn *gws.Conn
 	var err error
 	for i := 0; i < maxRetries; i++ {
 		slog.Debug(fmt.Sprintf("dialing %s", u.String()))
-		conn, resp, err = websocket.DefaultDialer.Dial(u.String(), map[string][]string{
-			"Authorization":        {"Bearer " + c.secretToken},
-			"reqbouncer-client-id": {c.clientId},
+		conn, _, err = gws.NewClient(c, &gws.ClientOption{
+			Addr: u.String(),
+			RequestHeader: map[string][]string{
+				"Authorization":        {"Bearer " + c.secretToken},
+				"reqbouncer-client-id": {c.clientId},
+			},
+			PermessageDeflate: gws.PermessageDeflate{
+				Enabled:               true,
+				ServerContextTakeover: true,
+				ClientContextTakeover: true,
+			},
 		})
 
 		if err != nil {
@@ -134,31 +142,50 @@ func (c *Client) connect(ctx context.Context) error {
 			continue
 		}
 
-		if websocket.IsCloseError(err, websocket.CloseNormalClosure) {
-			slog.Info("received close message")
-			return nil
-		}
-		if resp.StatusCode == http.StatusPreconditionFailed {
-			return fmt.Errorf("precondition failed: %d", resp.StatusCode)
-		}
-		if resp.StatusCode == http.StatusUnauthorized {
-			return fmt.Errorf("unauthorized: %d", resp.StatusCode)
-		}
-		if resp.StatusCode == http.StatusForbidden {
-			return fmt.Errorf("forbidden: %d", resp.StatusCode)
-		}
-
 		if err == nil {
-			//conn.SetCloseHandler(func(code int, text string) error {
-			//	slog.Info(fmt.Sprintf("received close message: %d %s", code, text))
-			//	return errors.New(text)
-			//})
 			c.conn = conn
 			break
 		}
 	}
 
 	return err
+}
+
+type WebSocket struct {
+}
+
+func (c *Client) OnClose(socket *gws.Conn, err error) {
+
+	//if strings.Contains(err.Error(), "client already connected") {
+	//	c.conn.NetConn().Close()
+	//}
+	fmt.Printf("onerror: err=%s\n", err.Error())
+	c.conn.NetConn().Close()
+	go func() {
+		defer close(c.closeErr)
+		c.closeErr <- err
+	}()
+}
+
+func (c *Client) OnPong(socket *gws.Conn, payload []byte) {
+}
+
+func (c *Client) OnOpen(socket *gws.Conn) {
+	_ = socket.WriteString("hello, there is client")
+}
+
+func (c *Client) OnPing(socket *gws.Conn, payload []byte) {
+	_ = socket.WritePong(payload)
+}
+
+func (c *Client) OnMessage(socket *gws.Conn, wsmsg *gws.Message) {
+	defer wsmsg.Close()
+	fmt.Printf("recv: %s\n", wsmsg.Data.String())
+	if wsmsg.Opcode == gws.OpcodeBinary {
+		if err := c.readAndForwardMessage(wsmsg.Bytes()); err != nil {
+			slog.Error("failed to read and forward message", slog.Any("error", err))
+		}
+	}
 }
 
 func (c *Client) Listen(ctx context.Context) error {
@@ -178,7 +205,7 @@ func (c *Client) Listen(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("failed to dial after %d attempts: %s", maxRetries, err)
 	}
-	defer c.conn.Close()
+	defer c.conn.NetConn().Close()
 
 	// Handle graceful shutdown
 	ch := make(chan os.Signal, 1)
@@ -189,38 +216,14 @@ func (c *Client) Listen(ctx context.Context) error {
 
 	// Main loop: read messages and forward requests
 	slog.Info("successfully connected, waiting for messages...")
-	for {
-		msgType, message, err := c.conn.ReadMessage()
-		if err != nil {
-			if websocket.IsCloseError(err, websocket.CloseNormalClosure) {
-				if strings.Contains(err.Error(), "client already connected") {
-					return err
-				}
-			}
-			slog.Info(fmt.Sprintf("read: %s", err))
-			slog.Info("reconnecting")
-			err = c.connect(ctx)
-			if err != nil {
-				return fmt.Errorf("failed to reconnect after %d attempts: %w", maxRetries, err)
-			}
-			return nil
-		}
-		if msgType == websocket.CloseMessage {
-			slog.Info("received close message", slog.Any("msg", string(message)))
-			return errors.New(string(message))
-		}
+	c.conn.ReadLoop()
 
-		if msgType == websocket.BinaryMessage {
-			if err := c.readAndForwardMessage(ctx, message); err != nil {
-				slog.Error("failed to read and forward message", slog.Any("error", err))
-			}
-		}
-	}
+	return <-c.closeErr
 }
 
-func handleShutdown(c chan os.Signal, conn *websocket.Conn) {
+func handleShutdown(c chan os.Signal, conn *gws.Conn) {
 	<-c
-	defer conn.Close()
+	defer conn.NetConn().Close()
 	slog.Info("received interrupt signal")
 	err := conn.WriteMessage(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.CloseNormalClosure, ""))
 	if err != nil {
@@ -229,7 +232,7 @@ func handleShutdown(c chan os.Signal, conn *websocket.Conn) {
 	os.Exit(0)
 }
 
-func (c *Client) readAndForwardMessage(ctx context.Context, socketPayload []byte) error {
+func (c *Client) readAndForwardMessage(socketPayload []byte) error {
 
 	var wireMessage wire.WireMessage
 	if err := wireMessage.Deserialize(socketPayload); err != nil {
@@ -243,7 +246,6 @@ func (c *Client) readAndForwardMessage(ctx context.Context, socketPayload []byte
 		slog.Error("failed to read request", slog.Any("error", err))
 		return err
 	}
-
 	req.RequestURI = ""
 	req.URL.Scheme = c.target.HttpScheme()
 	req.URL.Host = c.target.String()

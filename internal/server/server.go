@@ -6,17 +6,18 @@ import (
 	"errors"
 	"fmt"
 	"github.com/google/uuid"
+	"github.com/labstack/echo/v4/middleware"
+	"github.com/lxzan/gws"
 	"github.com/znowdev/reqbouncer/internal/wire"
 	"log/slog"
 	"net/http"
-	"sync"
+	"strings"
 	"sync/atomic"
 	"time"
 
 	"github.com/ThreeDotsLabs/watermill"
 	"github.com/ThreeDotsLabs/watermill/message"
 	"github.com/ThreeDotsLabs/watermill/pubsub/gochannel"
-	"github.com/gorilla/websocket"
 	"github.com/labstack/echo/v4"
 )
 
@@ -33,12 +34,27 @@ type Config struct {
 
 func Start(cfg Config) error {
 	e := echo.New()
+	e.Use(subdomainMw)
+	e.Use(middleware.Logger())
+	e.Use(middleware.Recover())
+	e.Use(middleware.CORS())
+	e.Use(middleware.Gzip())
+	e.Use(middleware.Secure())
+	e.Use(middleware.RequestID())
+	e.Use(middleware.BodyLimit("1M"))
+	e.Use(middleware.Decompress())
 	pubSub := gochannel.NewGoChannel(
 		gochannel.Config{},
 		watermill.NewStdLogger(false, false),
 	)
 
-	srv := &server{&websocket.Upgrader{}, pubSub, &clientMap{clients: make(map[string]struct{})}}
+	cm := &clientMap{clients: make(map[string]struct{})}
+
+	upgrader := gws.NewUpgrader(&Handler{cm, pubSub}, &gws.ServerOption{
+		PermessageDeflate: gws.PermessageDeflate{Enabled: true}, // Enable compression
+		ParallelEnabled:   true,                                 // Parallel message processing
+	})
+	srv := &server{upgrader, pubSub, cm}
 
 	authMw := newAuthMiddleware(cfg.SecretToken)
 
@@ -55,51 +71,148 @@ func Start(cfg Config) error {
 
 }
 
+func subdomainMw(next echo.HandlerFunc) echo.HandlerFunc {
+	return func(c echo.Context) error {
+		host := c.Request().Host
+		subdomain := strings.Split(host, ".")[0]
+		c.Set("subdomain", subdomain)
+		return next(c)
+	}
+}
+
+const (
+	PingInterval = 5 * time.Second
+	PingWait     = 10 * time.Second
+)
+
+const (
+	CloseNormalClosure = 1000
+)
+
+type Handler struct {
+	clientMap *clientMap
+	pubSub    *gochannel.GoChannel
+}
+
+func (c *Handler) OnOpen(socket *gws.Conn) {
+	_ = socket.SetDeadline(time.Now().Add(PingInterval + PingWait))
+	v, ok := socket.Session().Load("subdomain")
+	if ok {
+		slog.Info("socket opened", slog.Any("subdomain", v))
+		if c.clientMap.HasClient(v.(string)) {
+			slog.Info("client already connected for subdomain", slog.Any("subdomain", v))
+			socket.WriteClose(CloseNormalClosure, []byte("client already connected"))
+			return
+		}
+		c.clientMap.AddClient(v.(string))
+
+		ctx := context.Background()
+		var clientMessages <-chan *message.Message
+		clientMessages, err := c.pubSub.Subscribe(ctx, v.(string))
+		if err != nil {
+			socket.WriteClose(CloseNormalClosure, []byte("could not subscribe to client topic"))
+		}
+
+		globalMessages, err := c.pubSub.Subscribe(ctx, requestsTopic)
+		if err != nil {
+			socket.WriteClose(CloseNormalClosure, []byte("could not subscribe to global topic"))
+		}
+
+		go func() {
+			for {
+				select {
+
+				case msg := <-clientMessages:
+					slog.Debug("sending client message", slog.Any("message_id", msg.UUID))
+
+					wireMsg := wire.WireMessage{
+						ID:      msg.UUID,
+						Payload: msg.Payload,
+					}
+
+					bytes, err := wireMsg.Serialize()
+					if err != nil {
+						slog.Error("failed to serialize message", slog.Any("error", err))
+						continue
+					}
+
+					err = socket.WriteMessage(gws.OpcodeBinary, bytes)
+					if err != nil {
+						slog.Error("failed to write message", slog.Any("error", err))
+						continue
+					}
+					msg.Ack()
+				case msg := <-globalMessages:
+					slog.Debug("sending global message", slog.Any("message_id", msg.UUID))
+
+					wireMsg := wire.WireMessage{
+						ID:      msg.UUID,
+						Payload: msg.Payload,
+					}
+
+					bytes, err := wireMsg.Serialize()
+					if err != nil {
+						slog.Error("failed to serialize message", slog.Any("error", err))
+						continue
+					}
+
+					err = socket.WriteMessage(gws.OpcodeBinary, bytes)
+					if err != nil {
+						slog.Error("failed to serialize message", slog.Any("error", err))
+						continue
+					}
+					msg.Ack()
+				}
+			}
+		}()
+	}
+
+}
+
+func (c *Handler) OnClose(socket *gws.Conn, err error) {
+	v, ok := socket.Session().Load("subdomain")
+	if ok {
+		slog.Info("socket closed", slog.Any("subdomain", v))
+		c.clientMap.RemoveClient(v.(string))
+	}
+}
+
+func (c *Handler) OnPing(socket *gws.Conn, payload []byte) {
+	_ = socket.SetDeadline(time.Now().Add(PingInterval + PingWait))
+	_ = socket.WritePong(nil)
+}
+
+func (c *Handler) OnPong(socket *gws.Conn, payload []byte) {}
+
+func (c *Handler) OnMessage(socket *gws.Conn, wsmsg *gws.Message) {
+	defer wsmsg.Close()
+
+	if wsmsg.Opcode != gws.OpcodeBinary {
+		slog.Error("received non-binary message")
+		return
+	}
+
+	slog.Debug("received binary message", slog.Any("content", string(wsmsg.Bytes())))
+	var wireMsg wire.WireMessage
+	if err := wireMsg.Deserialize(wsmsg.Bytes()); err != nil {
+		slog.Error("failed to deserialize message", slog.Any("error", err))
+		return
+	}
+	msg := message.NewMessage(wireMsg.ID, wireMsg.Payload)
+	slog.Debug("publishing message", slog.Any("message_id", msg.UUID))
+	err := c.pubSub.Publish(wireMsg.ID, msg)
+	if err != nil {
+		slog.Error("failed to publish message", slog.Any("error", err))
+		return
+	}
+	return
+
+}
+
 type server struct {
-	*websocket.Upgrader
+	*gws.Upgrader
 	pubSub    *gochannel.GoChannel
 	clientMap *clientMap
-}
-
-type clientMap struct {
-	clients map[string]struct{}
-	mux     sync.Mutex
-}
-
-func (cm *clientMap) AddClient(clientId string) {
-	cm.mux.Lock()
-	defer cm.mux.Unlock()
-	cm.clients[clientId] = struct{}{}
-}
-
-func (cm *clientMap) HasClient(clientId string) bool {
-	cm.mux.Lock()
-	defer cm.mux.Unlock()
-	_, ok := cm.clients[clientId]
-	return ok
-
-}
-
-func (cm *clientMap) RemoveClient(clientId string) {
-	cm.mux.Lock()
-	defer cm.mux.Unlock()
-	delete(cm.clients, clientId)
-}
-
-func (cm *clientMap) Clients() []string {
-	cm.mux.Lock()
-	defer cm.mux.Unlock()
-	clients := make([]string, 0, len(cm.clients))
-	for client := range cm.clients {
-		clients = append(clients, client)
-	}
-	return clients
-}
-
-func (cm *clientMap) ConnectedClientsNo() int {
-	cm.mux.Lock()
-	defer cm.mux.Unlock()
-	return len(cm.clients)
 }
 
 func (s *server) healthHandler(c echo.Context) error {
@@ -109,6 +222,7 @@ func (s *server) healthHandler(c echo.Context) error {
 func (s *server) forwardRequest(c echo.Context) error {
 	slog.Info("forwarding request", slog.Any("headers", c.Request().Header))
 
+	//
 	requestId := uuid.NewString()
 
 	buf := new(bytes.Buffer)
@@ -120,13 +234,6 @@ func (s *server) forwardRequest(c echo.Context) error {
 	msg := message.NewMessage(requestId, buf.Bytes())
 
 	topic := requestsTopic
-	clientId := c.Request().Header.Get("reqbouncer-client-id")
-	if clientId != "" {
-		if !s.clientMap.HasClient(clientId) {
-			return c.String(http.StatusBadRequest, "no connected clients for this client id: "+clientId)
-		}
-		topic = clientId
-	}
 
 	slog.Debug("publishing message", slog.Any("message_id", msg.UUID))
 	err = s.pubSub.Publish(topic, msg)
@@ -170,137 +277,14 @@ func (s *server) forwardRequest(c echo.Context) error {
 }
 
 func (ws *server) handleSockets(c echo.Context) error {
-	var anonClient bool
-	clientId := c.Request().Header.Get("reqbouncer-client-id")
-	if clientId == "" {
-		anonClient = true
-		clientId = uuid.NewString()
-	}
-
-	if ws.clientMap.HasClient(clientId) {
-		slog.Debug("client already connected", slog.Any("client", clientId))
-		conn, err := ws.Upgrade(c.Response(), c.Request(), nil)
-		if err != nil {
-			return err
-		}
-		defer conn.Close()
-
-		err = conn.WriteControl(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.CloseNormalClosure, "client already connected"), time.Now().Add(time.Second))
-		if err != nil {
-			slog.Error("failed to write close message", slog.Any("error", err))
-			return err
-		}
-		return nil
-	}
-
-	ws.clientMap.AddClient(clientId)
-	slog.Info(fmt.Sprintf("client connected (total connected clients: %d)", ws.clientMap.ConnectedClientsNo()), slog.Any("total_connected_clients", ws.clientMap.ConnectedClientsNo()), slog.Any("client", c.Request().RemoteAddr))
-
-	defer func() {
-		ws.clientMap.RemoveClient(clientId)
-		slog.Info(fmt.Sprintf("client disconnected (total connected clients: %d)", ws.clientMap.ConnectedClientsNo()), slog.Any("total_connected_clients", ws.clientMap.ConnectedClientsNo()), slog.Any("client", c.Request().RemoteAddr))
-	}()
-
-	conn, err := ws.Upgrade(c.Response(), c.Request(), nil)
-	if err != nil {
-		return err
-	}
-	defer conn.Close()
-
-	var clientMessages <-chan *message.Message
-	if !anonClient {
-		clientMessages, err = ws.pubSub.Subscribe(c.Request().Context(), clientId)
-		if err != nil {
-			return err
-		}
-	}
-
-	globalMessages, err := ws.pubSub.Subscribe(c.Request().Context(), requestsTopic)
+	socket, err := ws.Upgrade(c.Response(), c.Request())
 	if err != nil {
 		return err
 	}
 
-	ctx, cancel := context.WithCancel(context.Background())
+	socket.Session().Store("subdomain", c.Get("subdomain"))
 
-	go func() {
-		for {
-			msgType, content, err := conn.ReadMessage()
-			if msgType == websocket.CloseMessage {
-				slog.Info("received close message")
-				cancel()
-				return
-			}
-			var closeError *websocket.CloseError
-			if errors.As(err, &closeError) {
-				slog.Debug("received close message", slog.Any("code", closeError.Code), slog.Any("text", closeError.Text))
-				cancel()
-				return
-			}
-			if err != nil {
-				slog.Error(err.Error(), slog.Any("error", err))
-				return
-			}
-			if msgType == websocket.BinaryMessage {
-				slog.Debug("received binary message", slog.Any("content", string(content)))
-				var wireMsg wire.WireMessage
-				if err := wireMsg.Deserialize(content); err != nil {
-					slog.Error("failed to deserialize message", slog.Any("error", err))
-					continue
-				}
-				msg := message.NewMessage(wireMsg.ID, wireMsg.Payload)
-				slog.Debug("publishing message", slog.Any("message_id", msg.UUID))
-				err := ws.pubSub.Publish(wireMsg.ID, msg)
-				if err != nil {
-					slog.Error("failed to publish message", slog.Any("error", err))
-					continue
-				}
-				continue
-			}
+	socket.ReadLoop()
 
-			slog.Debug("received message", slog.Any("type", msgType), slog.Any("content", string(content)))
-		}
-	}()
-
-	for {
-		select {
-		case <-ctx.Done():
-			return nil
-		case msg := <-clientMessages:
-			slog.Debug("sending client message", slog.Any("message_id", msg.UUID))
-
-			wireMsg := wire.WireMessage{
-				ID:      msg.UUID,
-				Payload: msg.Payload,
-			}
-
-			bytes, err := wireMsg.Serialize()
-			if err != nil {
-				return err
-			}
-
-			err = conn.WriteMessage(websocket.BinaryMessage, bytes)
-			if err != nil {
-				return err
-			}
-			msg.Ack()
-		case msg := <-globalMessages:
-			slog.Debug("sending global message", slog.Any("message_id", msg.UUID))
-
-			wireMsg := wire.WireMessage{
-				ID:      msg.UUID,
-				Payload: msg.Payload,
-			}
-
-			bytes, err := wireMsg.Serialize()
-			if err != nil {
-				return err
-			}
-
-			err = conn.WriteMessage(websocket.BinaryMessage, bytes)
-			if err != nil {
-				return err
-			}
-			msg.Ack()
-		}
-	}
+	return nil
 }

@@ -107,7 +107,9 @@ func TestE2E(t *testing.T) {
 			t.Fatalf("failed to make request: %v", err)
 		}
 		if resp.StatusCode != http.StatusOK {
-			t.Fatalf("expected status code %d, got %d", http.StatusOK, resp.StatusCode)
+			body, _ := io.ReadAll(resp.Body)
+
+			t.Fatalf("expected status code %d, got %d (%s)", http.StatusOK, resp.StatusCode, body)
 		}
 		body, err := io.ReadAll(resp.Body)
 		if err != nil {
@@ -127,7 +129,8 @@ func TestE2E(t *testing.T) {
 		req.Header.Set("reqbouncer-client-id", "client1")
 		resp, err := http.DefaultClient.Do(req)
 		if resp.StatusCode != http.StatusOK {
-			t.Fatalf("expected status code %d, got %d", http.StatusOK, resp.StatusCode)
+			body, _ := io.ReadAll(resp.Body)
+			t.Fatalf("expected status code %d, got %d (%s)", http.StatusOK, resp.StatusCode, body)
 		}
 		body, err := io.ReadAll(resp.Body)
 		if err != nil {
