@@ -4,6 +4,9 @@ import (
 	"bufio"
 	"errors"
 	"fmt"
+	"github.com/mscno/zerrors"
+	"github.com/znowdev/reqbouncer/internal/client/auth"
+	"github.com/znowdev/reqbouncer/internal/config"
 	"log"
 	"log/slog"
 	"os"
@@ -30,6 +33,8 @@ var Version string
 
 func main() {
 	// Parse command-line flags
+	var cfg *config.Config
+
 	app := &cli.App{
 		Name:  "reqbouncer",
 		Usage: "hijack and bounce requests to a different server",
@@ -42,8 +47,10 @@ func main() {
 			},
 		},
 		Before: func(c *cli.Context) error {
-			slogger.NewSlogger(c.Bool("debug"))
-			return nil
+			slogger.NewSlogger(true)
+			var err error
+			cfg, err = config.Init()
+			return zerrors.ToInternal(err, "failed to initialize config")
 		},
 		Commands: []*cli.Command{
 			{
@@ -55,14 +62,60 @@ func main() {
 				},
 			},
 			{
+				Name:  "login",
+				Usage: "logs in to the reqbouncer server",
+				Action: func(cCtx *cli.Context) error {
+
+					// Trim newline characters
+
+					// Get user home directory
+					homeDir, err := os.UserHomeDir()
+					if err != nil {
+						return err
+					}
+
+					// Create .reqbouncer directory if it doesn't exist
+					reqBouncerDir := filepath.Join(homeDir, ".reqbouncer")
+					if _, err := os.Stat(reqBouncerDir); os.IsNotExist(err) {
+						err = os.Mkdir(reqBouncerDir, 0755)
+						if err != nil {
+							return err
+						}
+					}
+					token, err := auth.Login(cCtx.Context, cfg.GithubClientId)
+					if err != nil {
+						return err
+					}
+
+					githubUser, err := auth.GetGitHubUser(token.AccessToken)
+					if err != nil {
+						return err
+					}
+					serverHost := fmt.Sprintf("%s.%s", githubUser.Login, cfg.ReqbouncerHost)
+
+					// Create config file
+					configFile := filepath.Join(reqBouncerDir, "config")
+					file, err := os.Create(configFile)
+					if err != nil {
+						return err
+					}
+					defer file.Close()
+
+					// Write server host and secret token to config file
+					_, err = file.WriteString(fmt.Sprintf("server_host=%s\naccess_token=%s", serverHost, token.AccessToken))
+					if err != nil {
+						return err
+					}
+
+					fmt.Println("Login successful.")
+					return nil
+				},
+			},
+			{
 				Name:    "server",
 				Aliases: []string{"serve"},
 				Usage:   "starts a reqbouncer server",
 				Flags: []cli.Flag{
-					&cli.StringFlag{
-						Name:  "secret-token",
-						Usage: "sets the secret token that protects the /_websocket endpoint",
-					},
 					&cli.StringFlag{
 						Name:    "port",
 						Aliases: []string{"p"},
@@ -85,8 +138,8 @@ func main() {
 					}
 
 					return server.Start(server.Config{
-						SecretToken: token,
-						Port:        port,
+						GithubProvider: auth.GetGitHubUser,
+						Port:           port,
 					})
 				},
 			},
@@ -122,7 +175,6 @@ func main() {
 						target = "localhost:" + arg
 					}
 					c, err := client.NewClient(client.Config{
-						ClientId:    parseClientId(cCtx),
 						Target:      target,
 						Server:      parseServer(cCtx),
 						Path:        "/_websocket",
@@ -200,7 +252,8 @@ func main() {
 	}
 
 	if err := app.Run(os.Args); err != nil {
-		log.Fatal(err)
+		slog.Error(err.Error(), "error", err)
+		os.Exit(1)
 	}
 
 }

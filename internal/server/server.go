@@ -8,6 +8,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/labstack/echo/v4/middleware"
 	"github.com/lxzan/gws"
+	"github.com/znowdev/reqbouncer/internal/client/auth"
 	"github.com/znowdev/reqbouncer/internal/wire"
 	"log/slog"
 	"net/http"
@@ -28,8 +29,8 @@ const (
 var connectedClients atomic.Int32
 
 type Config struct {
-	SecretToken string
-	Port        string
+	GithubProvider auth.GithubProvider
+	Port           string
 }
 
 func Start(cfg Config) error {
@@ -56,7 +57,7 @@ func Start(cfg Config) error {
 	})
 	srv := &server{upgrader, pubSub, cm}
 
-	authMw := newAuthMiddleware(cfg.SecretToken)
+	authMw := newAuthMiddleware(cfg.GithubProvider)
 
 	e.GET("/_health", srv.healthHandler)
 	e.GET("/_websocket", srv.handleSockets, authMw)
@@ -113,11 +114,6 @@ func (c *Handler) OnOpen(socket *gws.Conn) {
 			socket.WriteClose(CloseNormalClosure, []byte("could not subscribe to client topic"))
 		}
 
-		globalMessages, err := c.pubSub.Subscribe(ctx, requestsTopic)
-		if err != nil {
-			socket.WriteClose(CloseNormalClosure, []byte("could not subscribe to global topic"))
-		}
-
 		go func() {
 			for {
 				select {
@@ -142,26 +138,7 @@ func (c *Handler) OnOpen(socket *gws.Conn) {
 						continue
 					}
 					msg.Ack()
-				case msg := <-globalMessages:
-					slog.Debug("sending global message", slog.Any("message_id", msg.UUID))
 
-					wireMsg := wire.WireMessage{
-						ID:      msg.UUID,
-						Payload: msg.Payload,
-					}
-
-					bytes, err := wireMsg.Serialize()
-					if err != nil {
-						slog.Error("failed to serialize message", slog.Any("error", err))
-						continue
-					}
-
-					err = socket.WriteMessage(gws.OpcodeBinary, bytes)
-					if err != nil {
-						slog.Error("failed to serialize message", slog.Any("error", err))
-						continue
-					}
-					msg.Ack()
 				}
 			}
 		}()
@@ -233,10 +210,8 @@ func (s *server) forwardRequest(c echo.Context) error {
 
 	msg := message.NewMessage(requestId, buf.Bytes())
 
-	topic := requestsTopic
-
 	slog.Debug("publishing message", slog.Any("message_id", msg.UUID))
-	err = s.pubSub.Publish(topic, msg)
+	err = s.pubSub.Publish(c.Get("subdomain").(string), msg)
 	if err != nil {
 		return err
 	}

@@ -16,8 +16,6 @@ import (
 	"os/signal"
 	"sync"
 	"time"
-
-	"github.com/gorilla/websocket"
 )
 
 type HostPost struct {
@@ -48,7 +46,6 @@ type Client struct {
 }
 
 type Config struct {
-	ClientId    string
 	Target      string
 	Server      string
 	Path        string
@@ -94,7 +91,6 @@ func NewClient(cfg Config) (*Client, error) {
 	}
 
 	return &Client{
-		clientId:    cfg.ClientId,
 		path:        cfg.Path,
 		target:      target,
 		server:      server,
@@ -225,7 +221,7 @@ func handleShutdown(c chan os.Signal, conn *gws.Conn) {
 	<-c
 	defer conn.NetConn().Close()
 	slog.Info("received interrupt signal")
-	err := conn.WriteMessage(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.CloseNormalClosure, ""))
+	err := conn.WriteMessage(gws.OpcodeCloseConnection, []byte("received interrupt signal"))
 	if err != nil {
 		slog.Error("failed to write close message", slog.Any("error", err))
 	}
@@ -280,7 +276,7 @@ func (c *Client) readAndForwardMessage(socketPayload []byte) error {
 		return err
 	}
 
-	return c.conn.WriteMessage(websocket.BinaryMessage, wirePayload)
+	return c.conn.WriteMessage(gws.OpcodeBinary, wirePayload)
 }
 
 func printBody(resp *http.Response) string {

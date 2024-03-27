@@ -3,6 +3,7 @@ package tests
 import (
 	"context"
 	"github.com/znowdev/reqbouncer/internal/client"
+	"github.com/znowdev/reqbouncer/internal/client/auth"
 	"github.com/znowdev/reqbouncer/internal/server"
 	"github.com/znowdev/reqbouncer/internal/slogger"
 	"io"
@@ -21,8 +22,12 @@ func TestE2E(t *testing.T) {
 	go func() {
 		// Start server
 		err := server.Start(server.Config{
-			SecretToken: "secret",
-			Port:        serverPort,
+			GithubProvider: func(token string) (auth.GitHubUser, error) {
+				return auth.GitHubUser{
+					Login: "client1",
+				}, nil
+			},
+			Port: serverPort,
 		})
 		if err != nil {
 			t.Fatalf("failed to start server: %v", err)
@@ -35,7 +40,6 @@ func TestE2E(t *testing.T) {
 	go func() {
 		// Start client
 		client, err := client.NewClient(client.Config{
-			ClientId:    "client1",
 			Target:      "localhost:" + targetPort,
 			Server:      "localhost:" + serverPort,
 			Path:        "/_websocket",
@@ -152,8 +156,12 @@ func TestE2EMultiClientsWithSameId(t *testing.T) {
 	go func() {
 		// Start server
 		err := server.Start(server.Config{
-			SecretToken: "secret",
-			Port:        serverPort,
+			GithubProvider: func(token string) (auth.GitHubUser, error) {
+				return auth.GitHubUser{
+					Login: "client1",
+				}, nil
+			},
+			Port: serverPort,
 		})
 		if err != nil {
 			t.Fatalf("failed to start server: %v", err)
@@ -166,7 +174,6 @@ func TestE2EMultiClientsWithSameId(t *testing.T) {
 	go func() {
 		// Start client
 		client, err := client.NewClient(client.Config{
-			ClientId:    "client1",
 			Target:      "localhost:" + targetPort,
 			Server:      "localhost:" + serverPort,
 			Path:        "/_websocket",
@@ -185,7 +192,6 @@ func TestE2EMultiClientsWithSameId(t *testing.T) {
 	time.Sleep(100 * time.Millisecond)
 
 	client, err := client.NewClient(client.Config{
-		ClientId:    "client1",
 		Target:      "localhost:" + targetPort,
 		Server:      "localhost:" + serverPort,
 		Path:        "/_websocket",
