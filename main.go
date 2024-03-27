@@ -80,7 +80,13 @@ func main() {
 							return err
 						}
 					}
-					token, err := auth.Login(cCtx.Context, cfg.GithubClientId)
+
+					githubClientId, err := auth.GetGithubConfig(defaultServer)
+					if err != nil {
+						return err
+					}
+
+					token, err := auth.Login(cCtx.Context, githubClientId)
 					if err != nil {
 						return err
 					}
@@ -89,7 +95,7 @@ func main() {
 					if err != nil {
 						return err
 					}
-					serverHost := fmt.Sprintf("%s.%s", githubUser.Login, cfg.ReqbouncerHost)
+					serverHost := fmt.Sprintf("%s.%s", githubUser.Login, defaultServer)
 
 					// Create config file
 					configFile := filepath.Join(reqBouncerDir, "config")

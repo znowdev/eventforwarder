@@ -2,6 +2,7 @@ package auth
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"github.com/gogama/httpx"
 	"github.com/gogama/httpx/retry"
@@ -11,6 +12,7 @@ import (
 	"net/http"
 	"net/url"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -38,6 +40,25 @@ func defaultClient() *httpx.Client {
 }
 
 var httpClient = defaultClient()
+
+func GetGithubConfig(url string) (string, error) {
+	resp, err := defaultClient().Get(strings.TrimSuffix(url, "/") + "/_config")
+	if err != nil {
+		return "", zerrors.Internal("error getting github config", "error", err)
+	}
+	if resp.StatusCode() != http.StatusOK {
+		return "", zerrors.Internal("unexpected response", "response_code", resp.StatusCode(), "error", string(resp.Body))
+	}
+
+	var config struct {
+		GithubClientId string `json:"github_client_id"`
+	}
+	if err := json.Unmarshal(resp.Body, &config); err != nil {
+		return "", zerrors.Internal("error unmarshalling github config", "error", err)
+	}
+
+	return config.GithubClientId, nil
+}
 
 func Login(ctx context.Context, githubClientId string) (*AccessTokenResponse, error) {
 

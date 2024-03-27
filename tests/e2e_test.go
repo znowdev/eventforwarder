@@ -2,6 +2,8 @@ package tests
 
 import (
 	"context"
+	"encoding/json"
+	"github.com/stretchr/testify/require"
 	"github.com/znowdev/reqbouncer/internal/client"
 	"github.com/znowdev/reqbouncer/internal/client/auth"
 	"github.com/znowdev/reqbouncer/internal/server"
@@ -224,4 +226,56 @@ func TestE2EMultiClientsWithSameId(t *testing.T) {
 	if gotErr == nil {
 		t.Fatalf("expected error, got nil")
 	}
+}
+
+func TestE2EServerUtilEndpoints(t *testing.T) {
+	slogger.NewSlogger(true)
+	serverPort := "50005"
+
+	go func() {
+		// Start server
+		err := server.Start(server.Config{
+			GithubClientid: "client1",
+			GithubUserProvider: func(token string) (auth.GitHubUser, error) {
+				return auth.GitHubUser{
+					Login: "client1",
+				}, nil
+			},
+			Port: serverPort,
+		})
+		if err != nil {
+			t.Fatalf("failed to start server: %v", err)
+		}
+	}()
+
+	time.Sleep(100 * time.Millisecond)
+	// Start client
+
+	t.Run("health", func(t *testing.T) {
+		resp, err := http.Get("http://localhost:" + serverPort + "/_health")
+		if err != nil {
+			t.Fatalf("failed to make request: %v", err)
+		}
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("expected status code %d, got %d", http.StatusOK, resp.StatusCode)
+		}
+	})
+
+	t.Run("config", func(t *testing.T) {
+		resp, err := http.Get("http://localhost:" + serverPort + "/_config")
+		if err != nil {
+			t.Fatalf("failed to make request: %v", err)
+		}
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("expected status code %d, got %d", http.StatusOK, resp.StatusCode)
+		}
+		var m map[string]interface{}
+		err = json.NewDecoder(resp.Body).Decode(&m)
+		require.NoError(t, err)
+		require.Equal(t, m["github_client_id"], "client1")
+
+		githubClientId, err := auth.GetGithubConfig("http://localhost:" + serverPort)
+		require.NoError(t, err)
+		require.Equal(t, "client1", githubClientId)
+	})
 }
