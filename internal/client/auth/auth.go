@@ -59,7 +59,8 @@ func Login(ctx context.Context, githubClientId string) (*AccessTokenResponse, er
 		return nil, err
 	}
 
-	slog.Info("response", "q", q)
+	fmt.Println("Please visit", q.Get("verification_uri"), "and enter the following code:")
+	fmt.Println("User code:", q.Get("user_code"))
 
 	intervalSeconds, err := strconv.Atoi(q.Get("interval"))
 	if err != nil {
