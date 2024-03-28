@@ -335,7 +335,7 @@ func (c *Client) readAndForwardMessage(socketPayload []byte) error {
 		return err
 	}
 	if resp.StatusCode == http.StatusSwitchingProtocols {
-		slog.Info("received switching protocols response")
+		slog.Info("websocket forwarding is not supported")
 		resp = internalErrorHttpResp(errors.New("switching protocols not supported"))
 	}
 	//if resp.StatusCode >= 400 {
