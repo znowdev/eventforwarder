@@ -150,21 +150,22 @@ func (c *Client) connect(ctx context.Context) error {
 
 		if resp != nil {
 			defer resp.Body.Close()
-			if resp.StatusCode == http.StatusNotFound {
+			switch resp.StatusCode {
+			case http.StatusSwitchingProtocols:
+			case http.StatusServiceUnavailable:
+			case http.StatusBadGateway:
+			case http.StatusGatewayTimeout:
+			case http.StatusNotFound:
 				return fmt.Errorf("server not found: " + c.server.Host)
-			}
-			if resp.StatusCode == http.StatusConflict {
+			case http.StatusConflict:
 				return fmt.Errorf("client already connected for host: " + c.server.Host)
-			}
-			if resp.StatusCode == http.StatusUnauthorized {
+			case http.StatusUnauthorized:
 				body, _ := io.ReadAll(resp.Body)
 				return zerrors.Unauthenticated(fmt.Sprintf("unauthorized: %s", body))
-			}
-			if resp.StatusCode == http.StatusForbidden {
-				return zerrors.PermissionDenied("permission denied")
-			}
-			if resp.StatusCode != http.StatusSwitchingProtocols {
-				slog.Debug(fmt.Sprintf("unexpected response: %s", resp.Status))
+			case http.StatusForbidden:
+				body, _ := io.ReadAll(resp.Body)
+				return zerrors.PermissionDenied(fmt.Sprintf("permission denied: %s", body))
+			default:
 				return fmt.Errorf("unexpected response: %s", resp.Status)
 			}
 		}
