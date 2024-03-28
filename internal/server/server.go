@@ -14,6 +14,7 @@ import (
 	"log/slog"
 	"net/http"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -32,6 +33,7 @@ type Config struct {
 }
 
 func Start(logger *slog.Logger, cfg Config) error {
+	logger = logger.With("component", "server")
 	e := echo.New()
 	e.Use(subdomainMw)
 	e.Use(slogecho.NewWithConfig(logger, slogecho.Config{
@@ -66,8 +68,22 @@ func Start(logger *slog.Logger, cfg Config) error {
 	cm := &clientMap{clients: make(map[string]struct{})}
 
 	upgrader := gws.NewUpgrader(&Handler{cm, pubSub}, &gws.ServerOption{
-		PermessageDeflate: gws.PermessageDeflate{Enabled: true}, // Enable compression
-		ParallelEnabled:   true,                                 // Parallel message processing
+		WriteBufferSize:     0,
+		PermessageDeflate:   gws.PermessageDeflate{Enabled: true}, // Enable compression
+		ParallelEnabled:     true,                                 // Parallel message processing
+		ParallelGolimit:     0,
+		ReadMaxPayloadSize:  0,
+		ReadBufferSize:      0,
+		WriteMaxPayloadSize: 0,
+		CheckUtf8Enabled:    false,
+		Logger:              nil,
+		Recovery:            nil,
+		TlsConfig:           nil,
+		HandshakeTimeout:    time.Second * 5,
+		SubProtocols:        nil,
+		ResponseHeader:      nil,
+		Authorize:           nil,
+		NewSession:          nil,
 	})
 	srv := &server{upgrader, cfg.GithubClientid, pubSub, cm}
 
@@ -75,8 +91,8 @@ func Start(logger *slog.Logger, cfg Config) error {
 
 	e.GET("/_config", srv.configHandler)
 	e.GET("/_health", srv.healthHandler)
-	e.GET("/_websocket", srv.handleSockets, authMw)
-	e.RouteNotFound("/*", srv.forwardRequest)
+	e.GET("/_websocket", srv.handleSockets, authMw, checkSubDomain(cm))
+	e.RouteNotFound("/*", srv.forwardRequest, ensureSubdomainHasListeners(cm))
 
 	err := e.Start(":" + cfg.Port)
 	if err != nil {
@@ -106,6 +122,32 @@ func subdomainMw(next echo.HandlerFunc) echo.HandlerFunc {
 	}
 }
 
+func checkSubDomain(cm *clientMap) echo.MiddlewareFunc {
+	return func(next echo.HandlerFunc) echo.HandlerFunc {
+		return func(c echo.Context) error {
+			subdomain := c.Get("subdomain").(string)
+			if cm.HasClient(subdomain) {
+				slog.Error("client already connected", slog.Any("subdomain", subdomain))
+				return c.JSON(http.StatusConflict, echo.Map{"error": "client already connected"})
+			}
+			return next(c)
+		}
+	}
+}
+
+func ensureSubdomainHasListeners(cm *clientMap) echo.MiddlewareFunc {
+	return func(next echo.HandlerFunc) echo.HandlerFunc {
+		return func(c echo.Context) error {
+			subdomain := c.Get("subdomain").(string)
+			if !cm.HasClient(subdomain) {
+				slog.Error("no clients connected for subdomain", slog.Any("subdomain", subdomain))
+				return c.JSON(http.StatusConflict, echo.Map{"error": fmt.Sprintf("no clients connected for host'%s'", c.Request().Host)})
+			}
+			return next(c)
+		}
+	}
+}
+
 const (
 	PingInterval = 5 * time.Second
 	PingWait     = 10 * time.Second
@@ -120,16 +162,25 @@ type Handler struct {
 	pubSub    *gochannel.GoChannel
 }
 
+var clientConnMux = sync.Mutex{}
+var clientConns = make(map[*gws.Conn]string)
+
 func (c *Handler) OnOpen(socket *gws.Conn) {
+	slog.Debug("socket opened")
+	clientConnMux.Lock()
+	defer clientConnMux.Unlock()
+	clientConns[socket] = socket.RemoteAddr().String()
 	_ = socket.SetDeadline(time.Now().Add(PingInterval + PingWait))
 	v, ok := socket.Session().Load("subdomain")
 	if ok {
-		slog.Info("socket opened", slog.Any("subdomain", v))
+
 		if c.clientMap.HasClient(v.(string)) {
 			slog.Info("client already connected for subdomain", slog.Any("subdomain", v))
 			socket.WriteClose(CloseNormalClosure, []byte("client already connected"))
+			defer socket.NetConn().Close()
 			return
 		}
+		slog.Info("socket connected to subdomain", slog.Any("subdomain", v))
 		c.clientMap.AddClient(v.(string))
 
 		ctx := context.Background()
@@ -142,7 +193,6 @@ func (c *Handler) OnOpen(socket *gws.Conn) {
 		go func() {
 			for {
 				select {
-
 				case msg := <-clientMessages:
 					slog.Debug("sending client message", slog.Any("message_id", msg.UUID))
 
@@ -172,6 +222,7 @@ func (c *Handler) OnOpen(socket *gws.Conn) {
 }
 
 func (c *Handler) OnClose(socket *gws.Conn, err error) {
+	slog.Debug("connection closed", slog.Any("error", err))
 	v, ok := socket.Session().Load("subdomain")
 	if ok {
 		slog.Info("socket closed", slog.Any("subdomain", v))
@@ -180,11 +231,15 @@ func (c *Handler) OnClose(socket *gws.Conn, err error) {
 }
 
 func (c *Handler) OnPing(socket *gws.Conn, payload []byte) {
+	//slog.Debug("received ping")
 	_ = socket.SetDeadline(time.Now().Add(PingInterval + PingWait))
 	_ = socket.WritePong(nil)
 }
 
-func (c *Handler) OnPong(socket *gws.Conn, payload []byte) {}
+func (c *Handler) OnPong(socket *gws.Conn, payload []byte) {
+	//slog.Debug("received pong")
+	_ = socket.SetDeadline(time.Now().Add(PingInterval + PingWait))
+}
 
 func (c *Handler) OnMessage(socket *gws.Conn, wsmsg *gws.Message) {
 	defer wsmsg.Close()
@@ -227,9 +282,6 @@ func (s *server) configHandler(c echo.Context) error {
 }
 
 func (s *server) forwardRequest(c echo.Context) error {
-	slog.Info("forwarding request", slog.Any("headers", c.Request().Header))
-
-	//
 	requestId := uuid.NewString()
 
 	buf := new(bytes.Buffer)

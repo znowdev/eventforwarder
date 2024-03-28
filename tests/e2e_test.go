@@ -20,10 +20,10 @@ func TestE2E(t *testing.T) {
 	slogger.NewSlogger(true)
 	targetPort := "50000"
 	serverPort := "50001"
-
+	logger, _ := slogger.NewSlogger(true)
 	go func() {
 		// Start server
-		err := server.Start(server.Config{
+		err := server.Start(logger, server.Config{
 			GithubUserProvider: func(token string) (auth.GitHubUser, error) {
 				return auth.GitHubUser{
 					Login: "client1",
@@ -45,7 +45,7 @@ func TestE2E(t *testing.T) {
 			Target:      "localhost:" + targetPort,
 			Server:      "localhost:" + serverPort,
 			Path:        "/_websocket",
-			SecretToken: "secret",
+			AccessToken: "secret",
 		})
 		if err != nil {
 			t.Fatalf("failed to start client: %v", err)
@@ -151,13 +151,14 @@ func TestE2E(t *testing.T) {
 }
 
 func TestE2EMultiClientsWithSameId(t *testing.T) {
-	slogger.NewSlogger(true)
+	logger, _ := slogger.NewSlogger(true)
+
 	targetPort := "50002"
 	serverPort := "50003"
 
 	go func() {
 		// Start server
-		err := server.Start(server.Config{
+		err := server.Start(logger, server.Config{
 			GithubUserProvider: func(token string) (auth.GitHubUser, error) {
 				return auth.GitHubUser{
 					Login: "client1",
@@ -179,7 +180,7 @@ func TestE2EMultiClientsWithSameId(t *testing.T) {
 			Target:      "localhost:" + targetPort,
 			Server:      "localhost:" + serverPort,
 			Path:        "/_websocket",
-			SecretToken: "secret",
+			AccessToken: "secret",
 		})
 		if err != nil {
 			t.Fatalf("failed to start client: %v", err)
@@ -197,7 +198,7 @@ func TestE2EMultiClientsWithSameId(t *testing.T) {
 		Target:      "localhost:" + targetPort,
 		Server:      "localhost:" + serverPort,
 		Path:        "/_websocket",
-		SecretToken: "secret",
+		AccessToken: "secret",
 	})
 	if err != nil {
 		t.Fatalf("failed to start client: %v", err)
@@ -229,12 +230,12 @@ func TestE2EMultiClientsWithSameId(t *testing.T) {
 }
 
 func TestE2EServerUtilEndpoints(t *testing.T) {
-	slogger.NewSlogger(true)
+	logger, _ := slogger.NewSlogger(true)
 	serverPort := "50005"
 
 	go func() {
 		// Start server
-		err := server.Start(server.Config{
+		err := server.Start(logger, server.Config{
 			GithubClientid: "client1",
 			GithubUserProvider: func(token string) (auth.GitHubUser, error) {
 				return auth.GitHubUser{

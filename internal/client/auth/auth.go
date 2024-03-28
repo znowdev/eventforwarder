@@ -9,6 +9,7 @@ import (
 	"github.com/gogama/httpx/timeout"
 	"github.com/mscno/zerrors"
 	"log/slog"
+	"net"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -42,6 +43,24 @@ func defaultClient() *httpx.Client {
 var httpClient = defaultClient()
 
 func GetGithubConfig(url string) (string, error) {
+	url = strings.TrimPrefix(url, "https://")
+	url = strings.TrimPrefix(url, "http://")
+	host, port, err := net.SplitHostPort(url)
+	if err != nil {
+		return "", err
+	}
+
+	if port == "" {
+		port = "443"
+	}
+
+	var scheme = "https"
+	if port != "443" {
+		scheme = "http"
+	}
+
+	url = scheme + "://" + host + ":" + port
+
 	url = strings.TrimSuffix(url, "/") + "/_config"
 	slog.Debug("getting github config", "url", url)
 	resp, err := defaultClient().Get(url)

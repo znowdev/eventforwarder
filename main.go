@@ -27,7 +27,7 @@ const (
 	maxRetries        = 3
 	retryPeriod       = 2 * time.Second
 	secretTokenEnvKey = "REQBOUNCER_SECRET_TOKEN"
-	defaultServer     = "https://reqbouncer.znow.dev"
+	defaultServer     = "reqbouncer.znow.dev:443"
 )
 
 var Version string
@@ -49,7 +49,7 @@ func main() {
 			},
 		},
 		Before: func(c *cli.Context) error {
-			logger, err = slogger.NewSlogger(true)
+			logger, err = slogger.NewSlogger(c.Bool("debug"))
 			return err
 		},
 		Commands: []*cli.Command{
@@ -159,14 +159,6 @@ func main() {
 						Aliases: []string{"s"},
 						Usage:   "reqbouncer server to connect to",
 					},
-					&cli.StringFlag{
-						Name:  "secret-token",
-						Usage: "specify the secret token to connect to the reqbouncer server",
-					},
-					&cli.StringFlag{
-						Name:  "user",
-						Usage: "specify the user id to connect to the reqbouncer server",
-					},
 				},
 				Action: func(cCtx *cli.Context) error {
 					if cCtx.NArg() == 0 {
@@ -185,74 +177,12 @@ func main() {
 						Target:      target,
 						Server:      parseServer(cCtx),
 						Path:        "/_websocket",
-						SecretToken: parseToken(cCtx),
+						AccessToken: parseToken(cCtx),
 					})
 					if err != nil {
 						return err
 					}
 					return c.Listen(cCtx.Context)
-				},
-			},
-			{
-				Name:  "configure",
-				Usage: "configures the local reqbouncer client",
-				Action: func(cCtx *cli.Context) error {
-					reader := bufio.NewReader(os.Stdin)
-
-					fmt.Print("Enter Server Host: ")
-					serverHost, err := reader.ReadString('\n')
-					if err != nil {
-						return err
-					}
-
-					fmt.Print("Enter UserId: ")
-					userId, err := reader.ReadString('\n')
-					if err != nil {
-						return err
-					}
-
-					fmt.Print("Enter Secret Token: ")
-					secretToken, err := reader.ReadString('\n')
-					if err != nil {
-						return err
-					}
-
-					// Trim newline characters
-					serverHost = strings.TrimSpace(serverHost)
-					secretToken = strings.TrimSpace(secretToken)
-					userId = strings.TrimSpace(userId)
-
-					// Get user home directory
-					homeDir, err := os.UserHomeDir()
-					if err != nil {
-						return err
-					}
-
-					// Create .reqbouncer directory if it doesn't exist
-					reqBouncerDir := filepath.Join(homeDir, ".reqbouncer")
-					if _, err := os.Stat(reqBouncerDir); os.IsNotExist(err) {
-						err = os.Mkdir(reqBouncerDir, 0755)
-						if err != nil {
-							return err
-						}
-					}
-
-					// Create config file
-					configFile := filepath.Join(reqBouncerDir, "config")
-					file, err := os.Create(configFile)
-					if err != nil {
-						return err
-					}
-					defer file.Close()
-
-					// Write server host and secret token to config file
-					_, err = file.WriteString(fmt.Sprintf("server_host=%s\nclient_id=%s\nsecret_token=%s", serverHost, userId, secretToken))
-					if err != nil {
-						return err
-					}
-
-					fmt.Println("Configuration saved successfully.")
-					return nil
 				},
 			},
 		},
@@ -301,7 +231,7 @@ func parseConfigKey(key string) (string, error) {
 }
 
 func parseToken(cCtx *cli.Context) string {
-	token := cCtx.String("secret-token")
+	token := cCtx.String("access-token")
 	if token != "" {
 		return token
 	}
@@ -310,7 +240,7 @@ func parseToken(cCtx *cli.Context) string {
 		return val
 	}
 
-	token, err := parseConfigKey("secret_token")
+	token, err := parseConfigKey("access_token")
 	if err != nil {
 		log.Fatal(err)
 	}

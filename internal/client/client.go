@@ -4,9 +4,12 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"github.com/lxzan/gws"
+	"github.com/mscno/zerrors"
 	"github.com/znowdev/reqbouncer/internal/wire"
+	"io"
 	"log/slog"
 	"net"
 	"net/http"
@@ -36,27 +39,30 @@ func (h *HostPost) HttpScheme() string {
 }
 
 type Client struct {
-	conn        *gws.Conn
-	connMutex   sync.Mutex
-	path        string
-	target      HostPost
-	server      HostPost
-	secretToken string
-	clientId    string
-	closeErr    chan error
+	conn           *gws.Conn
+	connMutex      sync.Mutex
+	path           string
+	target         HostPost
+	server         HostPost
+	accessToken    string
+	clientId       string
+	closeErr       chan error
+	reconnectDelay time.Duration
+	maxConnAge     time.Duration
 }
 
 type Config struct {
 	Target      string
 	Server      string
 	Path        string
-	SecretToken string
+	AccessToken string
 }
 
 const (
-	maxRetries  = 3
-	retryPeriod = 2 * time.Second
+	maxRetries = 5
 )
+
+var retryPeriod = 1 * time.Second
 
 func splitHostPort(hostPort string) (HostPost, error) {
 	hostPort = strings.TrimPrefix(hostPort, "http://")
@@ -93,11 +99,17 @@ func NewClient(cfg Config) (*Client, error) {
 		return nil, err
 	}
 
+	if cfg.AccessToken == "" {
+		return nil, fmt.Errorf("missing access token")
+	}
+
+	slog.Debug(fmt.Sprintf("connecting to %s:%s", server.Host, server.Port))
+
 	return &Client{
 		path:        cfg.Path,
 		target:      target,
 		server:      server,
-		secretToken: cfg.SecretToken,
+		accessToken: cfg.AccessToken,
 		closeErr:    make(chan error),
 	}, nil
 
@@ -112,7 +124,7 @@ func (c *Client) connect(ctx context.Context) error {
 		scheme = "wss"
 	}
 
-	if c.server.Host == "localhost" {
+	if c.server.Host == "localhost" || strings.HasSuffix(c.server.Host, ".internal") {
 		c.server.Host += ":" + c.server.Port
 	}
 
@@ -120,12 +132,13 @@ func (c *Client) connect(ctx context.Context) error {
 
 	var conn *gws.Conn
 	var err error
+	var resp *http.Response
 	for i := 0; i < maxRetries; i++ {
 		slog.Debug(fmt.Sprintf("dialing %s", u.String()))
-		conn, _, err = gws.NewClient(c, &gws.ClientOption{
+		conn, resp, err = gws.NewClient(c, &gws.ClientOption{
 			Addr: u.String(),
 			RequestHeader: map[string][]string{
-				"Authorization":        {"Bearer " + c.secretToken},
+				"Authorization":        {"Bearer " + c.accessToken},
 				"reqbouncer-client-id": {c.clientId},
 			},
 			PermessageDeflate: gws.PermessageDeflate{
@@ -135,14 +148,38 @@ func (c *Client) connect(ctx context.Context) error {
 			},
 		})
 
+		if resp != nil {
+			defer resp.Body.Close()
+			if resp.StatusCode == http.StatusNotFound {
+				return fmt.Errorf("server not found: " + c.server.Host)
+			}
+			if resp.StatusCode == http.StatusConflict {
+				return fmt.Errorf("client already connected for host: " + c.server.Host)
+			}
+			if resp.StatusCode == http.StatusUnauthorized {
+				body, _ := io.ReadAll(resp.Body)
+				return zerrors.Unauthenticated(fmt.Sprintf("unauthorized: %s", body))
+			}
+			if resp.StatusCode == http.StatusForbidden {
+				return zerrors.PermissionDenied("permission denied")
+			}
+			if resp.StatusCode != http.StatusSwitchingProtocols {
+				slog.Debug(fmt.Sprintf("unexpected response: %s", resp.Status))
+				return fmt.Errorf("unexpected response: %s", resp.Status)
+			}
+		}
+
 		if err != nil {
 			slog.Debug(fmt.Sprintf("failed to dial, retrying in %s", retryPeriod), slog.Any("error", err))
 			time.Sleep(retryPeriod)
+			retryPeriod = retryPeriod * 2
 			continue
 		}
 
 		if err == nil {
+			slog.Info(fmt.Sprintf("successfully connected to %s", c.server.Host))
 			c.conn = conn
+			c.conn.SetDeadline(time.Now().Add(30 * time.Second))
 			break
 		}
 	}
@@ -154,32 +191,57 @@ type WebSocket struct {
 }
 
 func (c *Client) OnClose(socket *gws.Conn, err error) {
+	// Start a goroutine to reconnect after ReconnectDelay
+	slog.Debug("connection closed", slog.Any("error", err))
 
-	//if strings.Contains(err.Error(), "client already connected") {
-	//	c.conn.NetConn().Close()
-	//}
-	fmt.Printf("onerror: err=%s\n", err.Error())
-	c.conn.NetConn().Close()
-	go func() {
-		defer close(c.closeErr)
-		c.closeErr <- err
-	}()
+	if strings.Contains(err.Error(), "client already connected") {
+		fmt.Printf("onerror: err=%s\n", err.Error())
+		c.conn.NetConn().Close()
+	}
+	//go func() {
+	//	defer close(c.closeErr)
+	//	c.closeErr <- err
+	//}()
 }
 
+const (
+	PingInterval = 5 * time.Second
+	PingWait     = 10 * time.Second
+)
+
 func (c *Client) OnPong(socket *gws.Conn, payload []byte) {
+	//slog.Debug("received pong")
+	_ = socket.SetDeadline(time.Now().Add(PingInterval + PingWait))
 }
 
 func (c *Client) OnOpen(socket *gws.Conn) {
-	_ = socket.WriteString("hello, there is client")
+	go func() {
+		tick := time.Tick(PingInterval)
+		for {
+			select {
+			case <-tick:
+				//slog.Debug("sending ping")
+				if err := socket.WritePing(nil); err != nil {
+					if errors.Is(err, gws.ErrConnClosed) {
+						return
+					}
+					slog.Error("failed to write ping", slog.Any("error", err))
+				}
+			}
+
+		}
+	}()
 }
 
 func (c *Client) OnPing(socket *gws.Conn, payload []byte) {
+	slog.Debug("received ping")
+	_ = socket.SetDeadline(time.Now().Add(PingInterval + PingWait))
+	_ = socket.WritePong(nil)
 	_ = socket.WritePong(payload)
 }
 
 func (c *Client) OnMessage(socket *gws.Conn, wsmsg *gws.Message) {
 	defer wsmsg.Close()
-	fmt.Printf("recv: %s\n", wsmsg.Data.String())
 	if wsmsg.Opcode == gws.OpcodeBinary {
 		if err := c.readAndForwardMessage(wsmsg.Bytes()); err != nil {
 			slog.Error("failed to read and forward message", slog.Any("error", err))
@@ -191,10 +253,6 @@ func (c *Client) Listen(ctx context.Context) error {
 	target := c.target
 	server := c.server
 
-	// Prepare the WebSocket scheme and host
-
-	// Prepare the URL
-
 	slog.Info(fmt.Sprintf("connecting to %s", server.Host))
 	if c.clientId != "" {
 		slog.Info(fmt.Sprintf("using client_id %s", c.clientId))
@@ -202,7 +260,7 @@ func (c *Client) Listen(ctx context.Context) error {
 	// Connect to the server
 	err := c.connect(ctx)
 	if err != nil {
-		return fmt.Errorf("failed to dial after %d attempts: %s", maxRetries, err)
+		return fmt.Errorf("failed to dial: %w", err)
 	}
 	defer c.conn.NetConn().Close()
 
@@ -214,10 +272,29 @@ func (c *Client) Listen(ctx context.Context) error {
 	slog.Info(fmt.Sprintf("forwarding all requests to %s", target.String()))
 
 	// Main loop: read messages and forward requests
-	slog.Info("successfully connected, waiting for messages...")
-	c.conn.ReadLoop()
+	for {
+		c.conn.ReadLoop()
+		slog.Info("connection lost, trying to reconnect...")
+		err = c.connect(ctx)
+		if err != nil {
+			return zerrors.ToInternal(err, "failed to reconnect")
+		}
+		continue
+		//slog.Debug("connection closed, waiting for close error")
+		//err = <-c.closeErr
+		//if err != nil {
+		//	if strings.Contains(err.Error(), "client already connected") {
+		//		break
+		//	}
+		//	c.closeErr = make(chan error)
+		//	slog.Error("connection closed", slog.Any("error", err))
+		//	slog.Info("reconnecting...")
+		//	continue
+		//}
+		//break
+	}
 
-	return <-c.closeErr
+	return err
 }
 
 func handleShutdown(c chan os.Signal, conn *gws.Conn) {
@@ -256,11 +333,15 @@ func (c *Client) readAndForwardMessage(socketPayload []byte) error {
 		slog.Error("failed to send request", slog.Any("error", err))
 		return err
 	}
-	if resp.StatusCode != http.StatusOK {
-		slog.Error("received bad response", slog.Any("response", resp.StatusCode), slog.String("destination", c.target.String()), slog.Any("request", req.URL.String()),
-			slog.Any("response", resp.StatusCode), slog.Any("body", printBody(resp)))
-		return fmt.Errorf("bad response: %d", resp.StatusCode)
+	if resp.StatusCode == http.StatusSwitchingProtocols {
+		slog.Info("received switching protocols response")
+		resp = internalErrorHttpResp(errors.New("switching protocols not supported"))
 	}
+	//if resp.StatusCode >= 400 {
+	//	slog.Error("received bad response", slog.Any("response", resp.StatusCode), slog.String("destination", c.target.String()), slog.Any("request", req.URL.String()),
+	//		slog.Any("response", resp.StatusCode), slog.Any("body", printBody(resp)))
+	//	return fmt.Errorf("bad response: %d", resp.StatusCode)
+	//}
 
 	respbytes, err := httputil.DumpResponse(resp, true)
 	if err != nil {
@@ -280,6 +361,13 @@ func (c *Client) readAndForwardMessage(socketPayload []byte) error {
 	}
 
 	return c.conn.WriteMessage(gws.OpcodeBinary, wirePayload)
+}
+
+func internalErrorHttpResp(err error) *http.Response {
+	return &http.Response{
+		StatusCode: http.StatusInternalServerError,
+		Body:       io.NopCloser(strings.NewReader(err.Error())),
+	}
 }
 
 func printBody(resp *http.Response) string {
