@@ -42,7 +42,9 @@ func defaultClient() *httpx.Client {
 var httpClient = defaultClient()
 
 func GetGithubConfig(url string) (string, error) {
-	resp, err := defaultClient().Get(strings.TrimSuffix(url, "/") + "/_config")
+	url = strings.TrimSuffix(url, "/") + "/_config"
+	slog.Debug("getting github config", "url", url)
+	resp, err := defaultClient().Get(url)
 	if err != nil {
 		return "", zerrors.Internal("error getting github config", "error", err)
 	}
