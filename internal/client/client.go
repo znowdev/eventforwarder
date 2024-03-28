@@ -14,6 +14,7 @@ import (
 	"net/url"
 	"os"
 	"os/signal"
+	"strings"
 	"sync"
 	"time"
 )
@@ -58,6 +59,8 @@ const (
 )
 
 func splitHostPort(hostPort string) (HostPost, error) {
+	hostPort = strings.TrimPrefix(hostPort, "http://")
+	hostPort = strings.TrimPrefix(hostPort, "https://")
 	host, port, err := net.SplitHostPort(hostPort)
 	if err != nil {
 		return HostPost{}, err

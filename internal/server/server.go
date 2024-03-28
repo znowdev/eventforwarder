@@ -8,6 +8,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/labstack/echo/v4/middleware"
 	"github.com/lxzan/gws"
+	slogecho "github.com/samber/slog-echo"
 	"github.com/znowdev/reqbouncer/internal/client/auth"
 	"github.com/znowdev/reqbouncer/internal/wire"
 	"log/slog"
@@ -22,10 +23,6 @@ import (
 	"github.com/labstack/echo/v4"
 )
 
-const (
-	requestsTopic = "requests"
-)
-
 var connectedClients atomic.Int32
 
 type Config struct {
@@ -34,10 +31,26 @@ type Config struct {
 	Port               string
 }
 
-func Start(cfg Config) error {
+func Start(logger *slog.Logger, cfg Config) error {
 	e := echo.New()
 	e.Use(subdomainMw)
-	e.Use(middleware.Logger())
+	e.Use(slogecho.NewWithConfig(logger, slogecho.Config{
+		DefaultLevel:       slog.LevelInfo,
+		ClientErrorLevel:   slog.LevelWarn,
+		ServerErrorLevel:   slog.LevelError,
+		WithUserAgent:      false,
+		WithRequestID:      false,
+		WithRequestBody:    false,
+		WithRequestHeader:  false,
+		WithResponseBody:   false,
+		WithResponseHeader: false,
+		WithSpanID:         false,
+		WithTraceID:        false,
+		Filters: []slogecho.Filter{
+			slogecho.IgnorePath("/healthz"),
+			IgnoreUserAgent("Mozilla/5.0 (compatible; CensysInspect/1.1; +https://about.censys.io/)"),
+		},
+	}))
 	e.Use(middleware.Recover())
 	e.Use(middleware.CORS())
 	e.Use(middleware.Gzip())
@@ -73,7 +86,17 @@ func Start(cfg Config) error {
 	return nil
 
 }
+func IgnoreUserAgent(urls ...string) slogecho.Filter {
+	return func(c echo.Context) bool {
+		for _, url := range urls {
+			if c.Request().Header.Get("user-agent") == url {
+				return false
+			}
+		}
 
+		return true
+	}
+}
 func subdomainMw(next echo.HandlerFunc) echo.HandlerFunc {
 	return func(c echo.Context) error {
 		host := c.Request().Host
