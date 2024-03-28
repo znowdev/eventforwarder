@@ -35,6 +35,8 @@ var Version string
 func main() {
 	// Parse command-line flags
 	var cfg *config.Config
+	var err error
+	var logger *slog.Logger
 	app := &cli.App{
 		Name:  "reqbouncer",
 		Usage: "hijack and bounce requests to a different server",
@@ -47,8 +49,8 @@ func main() {
 			},
 		},
 		Before: func(c *cli.Context) error {
-			slogger.NewSlogger(true)
-			return nil
+			logger, err = slogger.NewSlogger(true)
+			return err
 		},
 		Commands: []*cli.Command{
 			{
@@ -141,7 +143,7 @@ func main() {
 						port = val
 					}
 
-					return server.Start(server.Config{
+					return server.Start(logger, server.Config{
 						GithubClientid:     cfg.GithubClientId,
 						GithubUserProvider: auth.GetGitHubUser,
 						Port:               port,
