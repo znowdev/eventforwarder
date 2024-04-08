@@ -147,6 +147,7 @@ func main() {
 						GithubClientid:     cfg.GithubClientId,
 						GithubUserProvider: auth.GetGitHubUser,
 						Port:               port,
+						Debug:              cCtx.Bool("debug"),
 					})
 				},
 			},

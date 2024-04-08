@@ -5,7 +5,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/ThreeDotsLabs/watermill"
+	"github.com/ThreeDotsLabs/watermill/message"
+	"github.com/ThreeDotsLabs/watermill/pubsub/gochannel"
 	"github.com/google/uuid"
+	"github.com/labstack/echo/v4"
 	"github.com/labstack/echo/v4/middleware"
 	"github.com/lxzan/gws"
 	slogecho "github.com/samber/slog-echo"
@@ -13,15 +17,11 @@ import (
 	"github.com/znowdev/reqbouncer/internal/wire"
 	"log/slog"
 	"net/http"
+	_ "net/http/pprof"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
-
-	"github.com/ThreeDotsLabs/watermill"
-	"github.com/ThreeDotsLabs/watermill/message"
-	"github.com/ThreeDotsLabs/watermill/pubsub/gochannel"
-	"github.com/labstack/echo/v4"
 )
 
 var connectedClients atomic.Int32
@@ -30,6 +30,7 @@ type Config struct {
 	GithubClientid     string
 	GithubUserProvider auth.GithubUserProvider
 	Port               string
+	Debug              bool
 }
 
 func Start(logger *slog.Logger, cfg Config) error {
@@ -88,6 +89,20 @@ func Start(logger *slog.Logger, cfg Config) error {
 	srv := &server{upgrader, cfg.GithubClientid, pubSub, cm}
 
 	authMw := newAuthMiddleware(cfg.GithubUserProvider)
+
+	//myRouter.HandleFunc("/debug/pprof/", pprof.Index)
+	//myRouter.HandleFunc("/debug/pprof/cmdline", pprof.Cmdline)
+	//myRouter.HandleFunc("/debug/pprof/profile", pprof.Profile)
+	//myRouter.HandleFunc("/debug/pprof/symbol", pprof.Symbol)
+	//myRouter.Handle("/debug/pprof/goroutine", pprof.Handler("goroutine"))
+	//myRouter.Handle("/debug/pprof/heap", pprof.Handler("heap"))
+	//myRouter.Handle("/debug/pprof/threadcreate", pprof.Handler("threadcreate"))
+	//myRouter.Handle("/debug/pprof/block", pprof.Handler("block"))
+
+	if cfg.Debug {
+		e.GET("/debug/pprof", echo.WrapHandler(http.DefaultServeMux))
+		e.Any("/debug/pprof/*", echo.WrapHandler(http.DefaultServeMux))
+	}
 
 	e.GET("/_config", srv.configHandler)
 	e.GET("/_health", srv.healthHandler)
