@@ -26,7 +26,7 @@ import (
 const (
 	maxRetries        = 3
 	retryPeriod       = 2 * time.Second
-	secretTokenEnvKey = "REQBOUNCER_SECRET_TOKEN"
+	ciTestTokenEnvKey = "CI_TEST_ACCESS_TOKEN"
 	defaultServer     = "reqbouncer.znow.dev:443"
 )
 
@@ -146,6 +146,7 @@ func main() {
 					return server.Start(logger, server.Config{
 						GithubClientid:     cfg.GithubClientId,
 						GithubUserProvider: auth.GetGitHubUser,
+						CiTestToken:        os.Getenv(ciTestTokenEnvKey),
 						Port:               port,
 						Debug:              cCtx.Bool("debug"),
 					})
@@ -220,7 +221,7 @@ func parseConfigKey(key string) (string, error) {
 		line := scanner.Text()
 		if strings.HasPrefix(line, key+"=") {
 			slog.Debug(fmt.Sprintf("found key `%s` in config file", key))
-			return strings.TrimPrefix(line, key+"="), nil
+			return strings.TrimSpace(strings.TrimPrefix(line, key+"=")), nil
 		}
 	}
 
@@ -235,10 +236,6 @@ func parseToken(cCtx *cli.Context) string {
 	token := cCtx.String("access-token")
 	if token != "" {
 		return token
-	}
-
-	if val, ok := os.LookupEnv(secretTokenEnvKey); ok {
-		return val
 	}
 
 	token, err := parseConfigKey("access_token")
@@ -256,20 +253,6 @@ func parseServer(cCtx *cli.Context) string {
 	}
 
 	server, err := parseConfigKey("server_host")
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	return server
-}
-
-func parseClientId(cCtx *cli.Context) string {
-	server := cCtx.String("client-id")
-	if server != "" {
-		return server
-	}
-
-	server, err := parseConfigKey("client_id")
 	if err != nil {
 		log.Fatal(err)
 	}

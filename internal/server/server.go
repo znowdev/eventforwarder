@@ -29,6 +29,7 @@ var connectedClients atomic.Int32
 type Config struct {
 	GithubClientid     string
 	GithubUserProvider auth.GithubUserProvider
+	CiTestToken        string
 	Port               string
 	Debug              bool
 }
@@ -88,7 +89,7 @@ func Start(logger *slog.Logger, cfg Config) error {
 	})
 	srv := &server{upgrader, cfg.GithubClientid, pubSub, cm}
 
-	authMw := newAuthMiddleware(cfg.GithubUserProvider)
+	authMw := newAuthMiddleware(cfg.CiTestToken, cfg.GithubUserProvider)
 
 	//myRouter.HandleFunc("/debug/pprof/", pprof.Index)
 	//myRouter.HandleFunc("/debug/pprof/cmdline", pprof.Cmdline)

@@ -9,9 +9,11 @@ import (
 	"github.com/labstack/echo/v4"
 )
 
-func newAuthMiddleware(githubProvider auth.GithubUserProvider) echo.MiddlewareFunc {
+func newAuthMiddleware(ciTestAccessToken string, githubProvider auth.GithubUserProvider) echo.MiddlewareFunc {
 	return func(next echo.HandlerFunc) echo.HandlerFunc {
 		return func(c echo.Context) error {
+
+			subDomain := c.Get("subdomain").(string)
 
 			authHeader := c.Request().Header.Get("Authorization")
 			if authHeader == "" {
@@ -23,14 +25,20 @@ func newAuthMiddleware(githubProvider auth.GithubUserProvider) echo.MiddlewareFu
 				return echo.NewHTTPError(http.StatusUnauthorized, "malformed Authorization header")
 			}
 
+			if subDomain == "ci-test" {
+				if parts[1] != ciTestAccessToken {
+					return echo.NewHTTPError(http.StatusUnauthorized, "invalid token")
+				}
+				return next(c)
+			}
+
 			githubUser, err := githubProvider(parts[1])
 			if err != nil {
 				slog.Error("error getting user from github", "error", err)
 				return echo.NewHTTPError(http.StatusUnauthorized, "invalid token")
 			}
 
-			subdomain := c.Get("subdomain").(string)
-			if !isLocalhost(subdomain) && strings.ToLower(githubUser.Login) != strings.ToLower(subdomain) {
+			if !isLocalhost(subDomain) && strings.ToLower(githubUser.Login) != strings.ToLower(subDomain) {
 				return echo.NewHTTPError(http.StatusUnauthorized, "user not allowed to access this subdomain")
 			}
 
