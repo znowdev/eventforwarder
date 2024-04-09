@@ -26,7 +26,7 @@ import (
 const (
 	maxRetries        = 3
 	retryPeriod       = 2 * time.Second
-	ciTestTokenEnvKey = "CI_TEST_ACCESS_TOKEN"
+	ciTestTokenEnvKey = "REQBOUNCER_CI_TEST_ACCESS_TOKEN"
 	defaultServer     = "reqbouncer.znow.dev:443"
 )
 
